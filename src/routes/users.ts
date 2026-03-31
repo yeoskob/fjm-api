@@ -1,0 +1,94 @@
+﻿import { Router, Request, Response } from 'express';
+import { db } from '../db';
+import { generateId } from '../utils/id';
+
+export const usersRouter = Router();
+
+usersRouter.get('/', (_req: Request, res: Response) => {
+  const users = db.prepare('SELECT id, name, username, role FROM users ORDER BY name').all();
+  res.json(users);
+});
+
+usersRouter.post('/', (req: Request, res: Response) => {
+  const { name, username, password, role } = req.body as {
+    name?: string;
+    username?: string;
+    password?: string;
+    role?: string;
+  };
+
+  if (!name || !username || !password || !role) {
+    res.status(400).json({ error: 'Missing required fields.' });
+    return;
+  }
+
+  const existing = db
+    .prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)')
+    .get(username) as { id: string } | undefined;
+
+  if (existing) {
+    res.status(409).json({ error: 'Username already exists.' });
+    return;
+  }
+
+  const id = generateId();
+  db.prepare('INSERT INTO users (id, name, username, password, role) VALUES (?, ?, ?, ?, ?)').run(
+    id,
+    name,
+    username,
+    password,
+    role
+  );
+
+  res.status(201).json({ id, name, username, role });
+});
+
+usersRouter.put('/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { name, username, password, role } = req.body as {
+    name?: string;
+    username?: string;
+    password?: string;
+    role?: string;
+  };
+
+  if (!name || !username || !role) {
+    res.status(400).json({ error: 'Missing required fields.' });
+    return;
+  }
+
+  const current = db.prepare('SELECT id FROM users WHERE id = ?').get(id) as { id: string } | undefined;
+  if (!current) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const duplicate = db
+    .prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?) AND id != ?')
+    .get(username, id) as { id: string } | undefined;
+
+  if (duplicate) {
+    res.status(409).json({ error: 'Username already exists.' });
+    return;
+  }
+
+  if (password) {
+    db.prepare('UPDATE users SET name = ?, username = ?, password = ?, role = ? WHERE id = ?').run(
+      name,
+      username,
+      password,
+      role,
+      id
+    );
+  } else {
+    db.prepare('UPDATE users SET name = ?, username = ?, role = ? WHERE id = ?').run(name, username, role, id);
+  }
+
+  res.json({ id, name, username, role });
+});
+
+usersRouter.delete('/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  res.status(204).send();
+});
