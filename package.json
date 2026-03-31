@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "web": "tsx src/web.ts",
-    "build": "echo skip build",
-    "start": "node index.js"
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js"
   },
   "keywords": [],
   "author": "",
