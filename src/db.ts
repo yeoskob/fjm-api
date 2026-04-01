@@ -278,6 +278,9 @@ const ensurePriceApprovedColumn = () => {
   if (!columns.some((c) => c.name === 'price_approved')) {
     db.exec('ALTER TABLE inquiry_items ADD COLUMN price_approved INTEGER NOT NULL DEFAULT 0');
   }
+  if (!columns.some((c) => c.name === 'approved_price')) {
+    db.exec('ALTER TABLE inquiry_items ADD COLUMN approved_price REAL');
+  }
 };
 
 ensureProductsSchema();

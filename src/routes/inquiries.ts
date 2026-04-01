@@ -65,6 +65,7 @@ function mapItem(row: Record<string, unknown>) {
     stockAvailability: row['stock_availability'],
     termPembayaran: row['term_pembayaran'],
     hargaJual: row['harga_jual'],
+    approvedPrice: row['approved_price'],
     margin: row['margin'],
     leadTimeCustomer: row['lead_time_customer'],
     validitasQuotation: row['validitas_quotation'],
@@ -587,7 +588,7 @@ function buildCoupaFormatExcel(items: Array<Record<string, unknown>>): Buffer {
     const bidId    = item['coupa_bid_id'] as string | number | null;
     const itemName = item['item_name'] as string | null;
     const itemQty  = item['item_quantity'] as number | null;
-    const hargaJual = item['harga_jual'] as number | null;
+    const approvedPrice = (item['approved_price'] ?? item['harga_jual']) as number | null;
     const leadTime  = normalizeLeadTime((item['lead_time_customer'] ?? item['lead_time']) as string | number | null);
     const catatan   = item['catatan_quotation'] as string | null;
     const description = catatan || (item['item_extended_description'] as string | null) || itemName;
@@ -608,8 +609,8 @@ function buildCoupaFormatExcel(items: Array<Record<string, unknown>>): Buffer {
     setCell(r, 14, item['item_fiscal_code'] as string | null);
     // Bid / supplier response columns
     setCell(r, 15, bidId != null ? String(bidId) : null);
-    setCell(r, 16, itemQty);     // bid.capacity
-    setCell(r, 17, hargaJual);   // bid.price_amount
+    setCell(r, 16, itemQty);        // bid.capacity
+    setCell(r, 17, approvedPrice);  // bid.price_amount
     setCell(r, 18, 'IDR');       // bid.price_currency
     setCell(r, 19, leadTime);    // bid.lead_time
     setCell(r, 20, itemName);    // bid.supplier_item_name
@@ -656,7 +657,7 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
       if (rowIndex == null) continue;
       const row = Number(rowIndex) - 1;
 
-      const hargaJual = item['harga_jual'] as number | null;
+      const approvedPrice = ((item['approved_price'] ?? item['harga_jual']) as number | null);
       const leadTimeCustomer = item['lead_time_customer'] as string | number | null;
       const leadTimeFallback = item['lead_time'] as string | number | null;
       const leadTime = normalizeLeadTime(leadTimeCustomer ?? leadTimeFallback);
@@ -666,7 +667,7 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
       const itemQty = item['item_quantity'] as number | null;
 
       setSheetCell(sheet, row, fieldMap['bid.capacity'], itemQty ?? null);
-      setSheetCell(sheet, row, fieldMap['bid.price_amount'], hargaJual ?? null);
+      setSheetCell(sheet, row, fieldMap['bid.price_amount'], approvedPrice ?? null);
       setSheetCell(sheet, row, fieldMap['bid.lead_time'], leadTime ?? null);
       setSheetCell(sheet, row, fieldMap['bid.supplier_item_name'], itemName ?? null);
       setSheetCell(sheet, row, fieldMap['bid.item_description'], description ?? null);
@@ -861,7 +862,7 @@ inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req: Request, res: Respo
   if (!hargaJual) { res.status(400).json({ error: 'hargaJual is required.' }); return; }
 
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
-  db.prepare('UPDATE inquiry_items SET harga_jual = ?, margin = ? WHERE id = ?')
+  db.prepare('UPDATE inquiry_items SET approved_price = ?, margin = ? WHERE id = ?')
     .run(hargaJual, margin, itemId);
 
   logActivity(id, 'Harga jual updated by sales', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -970,7 +971,7 @@ inquiriesRouter.post('/:id/approve', (req: Request, res: Response) => {
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
 
   db.prepare(
-    `UPDATE inquiry_items SET harga_jual = ?, margin = ?, lead_time_customer = ?,
+    `UPDATE inquiry_items SET approved_price = ?, margin = ?, lead_time_customer = ?,
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1 WHERE id = ?`
   ).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
 
@@ -998,7 +999,7 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
 
   db.prepare(
-    `UPDATE inquiry_items SET harga_jual = ?, margin = ?, lead_time_customer = ?,
+    `UPDATE inquiry_items SET approved_price = ?, margin = ?, lead_time_customer = ?,
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1 WHERE id = ?`
   ).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
 
