@@ -434,8 +434,9 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
         coupa_item_id, item_name, item_quantity, item_uom, item_need_by_date, item_manufacturer_name,
         item_manufacturer_part_number, item_classification_of_goods, item_extended_description, item_fiscal_code,
         coupa_bid_id, bid_capacity, bid_price_amount, bid_price_currency, bid_lead_time,
-        bid_supplier_item_name, bid_item_part_number, bid_item_description, bid_shipping_term
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        bid_supplier_item_name, bid_item_part_number, bid_item_description, bid_shipping_term,
+        harga_jual
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     for (const item of items) {
@@ -465,7 +466,8 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
         item.bid_supplier_item_name ?? null,
         item.bid_item_part_number ?? null,
         item.bid_item_description ?? null,
-        item.bid_shipping_term ?? null
+        item.bid_shipping_term ?? null,
+        item.bid_price_amount ?? null
       );
     }
 
