@@ -813,7 +813,7 @@ inquiriesRouter.post('/:id/items', (req: Request, res: Response) => {
   res.json({ ok: true, id: newId });
 });
 
-// PATCH /inquiries/:id/items/:itemId — Marketing updates target price / image
+// PATCH /inquiries/:id/items/:itemId — Marketing updates target price / image / need-by-date (new_inquiry only)
 inquiriesRouter.patch('/:id/items/:itemId', (req: Request, res: Response) => {
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
@@ -823,11 +823,28 @@ inquiriesRouter.patch('/:id/items/:itemId', (req: Request, res: Response) => {
   const item = db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
 
-  const { targetPrice, itemImage, doneBy, doneByName } = req.body as Record<string, unknown>;
-  db.prepare('UPDATE inquiry_items SET target_price = ?, item_image = ? WHERE id = ?')
-    .run(targetPrice ?? null, itemImage ?? null, itemId);
+  const { targetPrice, itemImage, itemNeedByDate, doneBy, doneByName } = req.body as Record<string, unknown>;
+  db.prepare('UPDATE inquiry_items SET target_price = ?, item_image = ?, item_need_by_date = ? WHERE id = ?')
+    .run(targetPrice ?? null, itemImage ?? null, itemNeedByDate ?? null, itemId);
 
   logActivity(id, 'Item reviewed by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  res.json({ ok: true });
+});
+
+// PATCH /inquiries/:id/items/:itemId/need-by-date — Sales updates need-by-date from any status
+inquiriesRouter.patch('/:id/items/:itemId/need-by-date', (req: Request, res: Response) => {
+  const { id, itemId } = req.params;
+  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
+
+  const item = db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string } | undefined;
+  if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
+
+  const { itemNeedByDate, doneBy, doneByName } = req.body as Record<string, unknown>;
+  db.prepare('UPDATE inquiry_items SET item_need_by_date = ? WHERE id = ?')
+    .run(itemNeedByDate ?? null, itemId);
+
+  logActivity(id, 'Need-by date updated by sales', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
 });
 
