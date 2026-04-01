@@ -4,12 +4,33 @@ import { generateId } from '../utils/id';
 
 export const usersRouter = Router();
 
+const getUserRole = (req: Request): string | undefined => {
+  return (req as { user?: { role?: string } }).user?.role;
+};
+
+const requireAdmin = (req: Request, res: Response): boolean => {
+  if (getUserRole(req) !== 'admin') {
+    res.status(403).json({ error: 'Admin access required.' });
+    return false;
+  }
+  return true;
+};
+
+const roleExists = (role: string): boolean => {
+  const existing = db.prepare('SELECT name FROM roles WHERE name = ?').get(role) as { name: string } | undefined;
+  return Boolean(existing);
+};
+
 usersRouter.get('/', (_req: Request, res: Response) => {
   const users = db.prepare('SELECT id, name, username, role FROM users ORDER BY name').all();
   res.json(users);
 });
 
 usersRouter.post('/', (req: Request, res: Response) => {
+  if (!requireAdmin(req, res)) {
+    return;
+  }
+
   const { name, username, password, role } = req.body as {
     name?: string;
     username?: string;
@@ -19,6 +40,11 @@ usersRouter.post('/', (req: Request, res: Response) => {
 
   if (!name || !username || !password || !role) {
     res.status(400).json({ error: 'Missing required fields.' });
+    return;
+  }
+
+  if (!roleExists(role)) {
+    res.status(400).json({ error: 'Role not found.' });
     return;
   }
 
@@ -44,6 +70,10 @@ usersRouter.post('/', (req: Request, res: Response) => {
 });
 
 usersRouter.put('/:id', (req: Request, res: Response) => {
+  if (!requireAdmin(req, res)) {
+    return;
+  }
+
   const { id } = req.params;
   const { name, username, password, role } = req.body as {
     name?: string;
@@ -54,6 +84,11 @@ usersRouter.put('/:id', (req: Request, res: Response) => {
 
   if (!name || !username || !role) {
     res.status(400).json({ error: 'Missing required fields.' });
+    return;
+  }
+
+  if (!roleExists(role)) {
+    res.status(400).json({ error: 'Role not found.' });
     return;
   }
 
@@ -88,6 +123,10 @@ usersRouter.put('/:id', (req: Request, res: Response) => {
 });
 
 usersRouter.delete('/:id', (req: Request, res: Response) => {
+  if (!requireAdmin(req, res)) {
+    return;
+  }
+
   const { id } = req.params;
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
   res.status(204).send();

@@ -18,6 +18,12 @@ db.exec(`
     role TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS roles (
+    name TEXT PRIMARY KEY,
+    menus TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS inquiries (
     id TEXT PRIMARY KEY,
     rfq_no TEXT,
@@ -171,6 +177,25 @@ const ensureProductsSchema = () => {
   }
 };
 
+const ensureDefaultRoles = () => {
+  const defaults: Array<{ name: string; menus: string[] }> = [
+    { name: 'admin', menus: ['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin'] },
+    { name: 'manager', menus: ['pricelist'] },
+    { name: 'sourcing', menus: ['sourcing'] },
+    { name: 'marketing', menus: ['marketing'] },
+  ];
+
+  const insert = db.prepare('INSERT OR IGNORE INTO roles (name, menus, created_at) VALUES (?, ?, ?)');
+  const now = new Date().toISOString();
+  const tx = db.transaction((rows: Array<{ name: string; menus: string[] }>) => {
+    for (const row of rows) {
+      insert.run(row.name, JSON.stringify(row.menus), now);
+    }
+  });
+
+  tx(defaults);
+};
+
 const ensureInquiriesCoupaColumns = () => {
   const columns = db.prepare("PRAGMA table_info('inquiries')").all() as Array<{ name: string }>;
   const names = columns.map((c) => c.name);
@@ -309,6 +334,7 @@ ensureSourcingPicColumn();
 ensureNotesItemIdColumn();
 ensurePriceApprovedColumn();
 ensureIndexes();
+ensureDefaultRoles();
 normalizeSalesRole();
 seedUsers();
 

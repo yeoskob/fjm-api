@@ -20,6 +20,27 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return;
   }
 
+  const defaultMenusForRole = (role: string): string[] => {
+    if (role === 'admin') return ['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin'];
+    if (role === 'manager') return ['pricelist'];
+    if (role === 'sourcing') return ['sourcing'];
+    if (role === 'marketing') return ['marketing'];
+    return [];
+  };
+
+  const roleRow = db.prepare('SELECT menus FROM roles WHERE name = ?').get(user.role) as { menus: string } | undefined;
+  let menus = defaultMenusForRole(user.role);
+  if (roleRow?.menus) {
+    try {
+      const parsed = JSON.parse(roleRow.menus);
+      if (Array.isArray(parsed)) {
+        menus = parsed.map((m) => String(m));
+      }
+    } catch {
+      menus = defaultMenusForRole(user.role);
+    }
+  }
+
   const token = db.transaction((userId: string) => {
     // Enforce single active session per user by clearing old sessions.
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
@@ -28,7 +49,7 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return nextToken;
   })(user.id);
 
-  res.json({ id: user.id, name: user.name, username: user.username, role: user.role, token });
+  res.json({ id: user.id, name: user.name, username: user.username, role: user.role, menus, token });
 });
 
 authRouter.post('/logout', (req: Request, res: Response) => {
