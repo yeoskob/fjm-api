@@ -179,7 +179,7 @@ const ensureProductsSchema = () => {
 
 const ensureDefaultRoles = () => {
   const defaults: Array<{ name: string; menus: string[] }> = [
-    { name: 'admin', menus: ['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin'] },
+    { name: 'admin', menus: ['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin', 'purchasing'] },
     { name: 'manager', menus: ['pricelist'] },
     { name: 'sourcing', menus: ['sourcing'] },
     { name: 'marketing', menus: ['marketing'] },
@@ -322,6 +322,9 @@ const ensurePriceApprovedColumn = () => {
   }
   if (!columns.some((c) => c.name === 'approved_price')) {
     db.exec('ALTER TABLE inquiry_items ADD COLUMN approved_price REAL');
+  }
+  if (!columns.some((c) => c.name === 'alternate_name')) {
+    db.exec('ALTER TABLE inquiry_items ADD COLUMN alternate_name TEXT');
   }
 };
 

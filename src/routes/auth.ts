@@ -20,16 +20,8 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return;
   }
 
-  const defaultMenusForRole = (role: string): string[] => {
-    if (role === 'admin') return ['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin'];
-    if (role === 'manager') return ['pricelist'];
-    if (role === 'sourcing') return ['sourcing'];
-    if (role === 'marketing') return ['marketing'];
-    return [];
-  };
-
   const roleRow = db.prepare('SELECT menus FROM roles WHERE name = ?').get(user.role) as { menus: string } | undefined;
-  let menus = defaultMenusForRole(user.role);
+  let menus: string[] = [];
   if (roleRow?.menus) {
     try {
       const parsed = JSON.parse(roleRow.menus);
@@ -37,7 +29,7 @@ authRouter.post('/login', (req: Request, res: Response) => {
         menus = parsed.map((m) => String(m));
       }
     } catch {
-      menus = defaultMenusForRole(user.role);
+      menus = [];
     }
   }
 

@@ -55,6 +55,7 @@ function mapItem(row: Record<string, unknown>) {
     bidPriceCurrency: row['bid_price_currency'],
     bidLeadTime: row['bid_lead_time'],
     bidSupplierItemName: row['bid_supplier_item_name'],
+    alternateName: row['alternate_name'],
     bidItemPartNumber: row['bid_item_part_number'],
     bidItemDescription: row['bid_item_description'],
     bidShippingTerm: row['bid_shipping_term'],
@@ -202,7 +203,7 @@ function allItemsApproved(items: Array<Record<string, unknown>>): boolean {
 function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: string) {
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(inquiryId) as { id: string; status: string } | undefined;
   if (!inquiry) return;
-  if (['deal', 'lost'].includes(inquiry.status)) return;
+  if (['deal', 'lost', 'ready_to_purchase'].includes(inquiry.status)) return;
 
   const items = db.prepare('SELECT price_approved FROM inquiry_items WHERE inquiry_id = ?').all(inquiryId) as Array<Record<string, unknown>>;
   const canMoveToQuotation = inquiry.status === 'price_approval' && allItemsApproved(items);
@@ -437,8 +438,8 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
         item_manufacturer_part_number, item_classification_of_goods, item_extended_description, item_fiscal_code,
         coupa_bid_id, bid_capacity, bid_price_amount, bid_price_currency, bid_lead_time,
         bid_supplier_item_name, bid_item_part_number, bid_item_description, bid_shipping_term,
-        harga_jual
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        harga_jual, alternate_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     for (const item of items) {
@@ -469,7 +470,8 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
         item.bid_item_part_number ?? null,
         item.bid_item_description ?? null,
         item.bid_shipping_term ?? null,
-        item.bid_price_amount ?? null
+        item.bid_price_amount ?? null,
+        item.bid_supplier_item_name ?? null
       );
     }
 
@@ -613,7 +615,7 @@ function buildCoupaFormatExcel(items: Array<Record<string, unknown>>): Buffer {
     setCell(r, 17, approvedPrice);  // bid.price_amount
     setCell(r, 18, 'IDR');       // bid.price_currency
     setCell(r, 19, leadTime);    // bid.lead_time
-    setCell(r, 20, itemName);    // bid.supplier_item_name
+    setCell(r, 20, (item['alternate_name'] ?? itemName) as string | null);  // bid.supplier_item_name
     setCell(r, 22, description); // bid.item_description
     setCell(r, 23, shipping);    // bid.shipping_term
   });
@@ -669,7 +671,8 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
       setSheetCell(sheet, row, fieldMap['bid.capacity'], itemQty ?? null);
       setSheetCell(sheet, row, fieldMap['bid.price_amount'], approvedPrice ?? null);
       setSheetCell(sheet, row, fieldMap['bid.lead_time'], leadTime ?? null);
-      setSheetCell(sheet, row, fieldMap['bid.supplier_item_name'], itemName ?? null);
+      const alternateName = item['alternate_name'] as string | null;
+      setSheetCell(sheet, row, fieldMap['bid.supplier_item_name'], alternateName ?? itemName ?? null);
       setSheetCell(sheet, row, fieldMap['bid.item_description'], description ?? null);
 
       const shipping = (item['term_pembayaran'] as string | null) || (item['bid_shipping_term'] as string | null);
@@ -910,7 +913,7 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
   const item = db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
 
-  const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, doneBy, doneByName } =
+  const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, alternateName, doneBy, doneByName } =
     req.body as Record<string, unknown>;
 
   if (!supplier || hargaBeli === undefined || !leadTime) {
@@ -919,8 +922,8 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
 
   db.prepare(
     `UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
-       stock_availability = ?, term_pembayaran = ? WHERE id = ?`
-  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, itemId);
+       stock_availability = ?, term_pembayaran = ?, alternate_name = ? WHERE id = ?`
+  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, itemId);
 
   logActivity(id, 'Sourcing info submitted', 'rfq', 'rfq', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -1030,6 +1033,25 @@ inquiriesRouter.post('/:id/close', (req: Request, res: Response) => {
     .run(outcome, new Date().toISOString(), doneBy, id);
 
   logActivity(id, `Closed as ${String(outcome)}`, oldStatus, String(outcome), String(note ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  res.json({ ok: true });
+});
+
+// POST /inquiries/:id/ready-to-purchase — move a deal to ready_to_purchase
+inquiriesRouter.post('/:id/ready-to-purchase', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+
+  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
+  if (inquiry.status !== 'deal') {
+    res.status(400).json({ error: 'Only deal inquiries can be moved to Ready to Purchase.' }); return;
+  }
+
+  const { doneBy, doneByName } = req.body as Record<string, unknown>;
+
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .run('ready_to_purchase', new Date().toISOString(), doneBy, id);
+
+  logActivity(id, 'Moved to Ready to Purchase', 'deal', 'ready_to_purchase', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
 });
 
