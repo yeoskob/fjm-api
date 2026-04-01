@@ -200,7 +200,7 @@ function allItemsApproved(items: Array<Record<string, unknown>>): boolean {
 function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: string) {
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(inquiryId) as { id: string; status: string } | undefined;
   if (!inquiry) return;
-  if (['deal', 'lost', 'follow_up'].includes(inquiry.status)) return;
+  if (['deal', 'lost'].includes(inquiry.status)) return;
 
   const items = db.prepare('SELECT harga_jual FROM inquiry_items WHERE inquiry_id = ?').all(inquiryId) as Array<Record<string, unknown>>;
   const canMoveToQuotation = inquiry.status === 'price_approval' && allItemsApproved(items);
@@ -313,7 +313,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
 
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries').get() as { c: number }).c;
   const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonth.toISOString()) as { c: number }).c;
-  const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','follow_up','deal')`).get() as { c: number }).c;
+  const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal')`).get() as { c: number }).c;
   const deals = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'deal'`).get() as { c: number }).c;
   const lost = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'lost'`).get() as { c: number }).c;
   const conversionRate = total > 0 ? +((deals / total) * 100).toFixed(1) : 0;
@@ -836,8 +836,8 @@ inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req: Request, res: Respo
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (!['quotation_sent', 'follow_up'].includes(inquiry.status)) {
-    res.status(400).json({ error: 'Inquiry must be in quotation_sent or follow_up status.' }); return;
+  if (inquiry.status !== 'quotation_sent') {
+    res.status(400).json({ error: 'Inquiry must be in quotation_sent status.' }); return;
   }
   const item = db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; harga_beli: number | null } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
@@ -992,24 +992,6 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
   res.json({ ok: true });
 });
 
-// POST /inquiries/:id/follow-up — Sales marks follow up
-inquiriesRouter.post('/:id/follow-up', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
-
-  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'quotation_sent') {
-    res.status(400).json({ error: 'Inquiry must be in quotation_sent status.' }); return;
-  }
-
-  const { doneBy, doneByName, note } = req.body as Record<string, unknown>;
-  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run('follow_up', new Date().toISOString(), doneBy, id);
-
-  logActivity(id, 'Follow up / Negotiation', 'quotation_sent', 'follow_up', String(note ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
-  res.json({ ok: true });
-});
-
 // POST /inquiries/:id/close — Sales or Manager closes as deal/lost
 inquiriesRouter.post('/:id/close', (req: Request, res: Response) => {
   const { id } = req.params;
@@ -1017,7 +999,7 @@ inquiriesRouter.post('/:id/close', (req: Request, res: Response) => {
 
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
 
-  const closeableStatuses = ['new_inquiry', 'rfq', 'quotation_sent', 'follow_up'];
+  const closeableStatuses = ['new_inquiry', 'rfq', 'quotation_sent'];
   if (!closeableStatuses.includes(inquiry.status)) {
     res.status(400).json({ error: 'Cannot close inquiry at this stage.' }); return;
   }
