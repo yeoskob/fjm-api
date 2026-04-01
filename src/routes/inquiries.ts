@@ -58,7 +58,6 @@ function mapItem(row: Record<string, unknown>) {
     bidItemPartNumber: row['bid_item_part_number'],
     bidItemDescription: row['bid_item_description'],
     bidShippingTerm: row['bid_shipping_term'],
-    targetPrice: row['target_price'],
     supplier: row['supplier'],
     hargaBeli: row['harga_beli'],
     leadTime: row['lead_time'],
@@ -690,7 +689,7 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
 
 // POST /inquiries
 inquiriesRouter.post('/', (req: Request, res: Response) => {
-  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, targetPrice, deadlineQuotation, lampiran, createdBy, createdByName } =
+  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, createdBy, createdByName } =
     req.body as Record<string, unknown>;
 
   if (!customer || !salesPic || !namaBarang || !createdBy) {
@@ -705,19 +704,19 @@ inquiriesRouter.post('/', (req: Request, res: Response) => {
   const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
 
   db.prepare(
-    `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, target_price, deadline_quotation, lampiran, status, created_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_inquiry', ?, ?)`
-  ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, spesifikasi ?? null, qty ?? null, targetPrice ?? null, needByDate, lampiran ?? null, createdAt, createdBy);
+    `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, deadline_quotation, lampiran, status, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_inquiry', ?, ?)`
+  ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, createdAt, createdBy);
 
   db.prepare(
     `INSERT INTO inquiry_items (
       id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
       item_manufacturer_name, item_manufacturer_part_number, item_classification_of_goods,
-      item_extended_description, target_price
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      item_extended_description
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(generateId(), id, namaBarang, qty ?? null, itemUom ?? null, needByDate,
     itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null,
-    spesifikasi ?? null, targetPrice ?? null);
+    spesifikasi ?? null);
 
   logActivity(id, 'Inquiry created', null, 'new_inquiry', null, String(createdBy), String(createdByName ?? createdBy));
 
@@ -734,7 +733,7 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Cannot edit inquiry at this stage.' }); return;
   }
 
-  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, targetPrice, deadlineQuotation, lampiran, updatedBy, updatedByName } =
+  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, updatedBy, updatedByName } =
     req.body as Record<string, unknown>;
 
   const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
@@ -743,10 +742,10 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
     `UPDATE inquiries SET
        customer = COALESCE(?, customer), sales_pic = COALESCE(?, sales_pic),
        nama_barang = COALESCE(?, nama_barang), spesifikasi = ?, qty = ?,
-       target_price = ?, deadline_quotation = ?, lampiran = ?,
+       deadline_quotation = ?, lampiran = ?,
        updated_at = ?, updated_by = ?
      WHERE id = ?`
-  ).run(customer ?? null, salesPic ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, targetPrice ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
+  ).run(customer ?? null, salesPic ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
 
   const itemCount = (db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id) as { c: number }).c;
   if (itemCount === 1) {
@@ -759,12 +758,10 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
          item_need_by_date = ?,
          item_manufacturer_name = ?,
          item_manufacturer_part_number = ?,
-         item_classification_of_goods = ?,
-         target_price = ?
+         item_classification_of_goods = ?
        WHERE inquiry_id = ?`
     ).run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate,
-      itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null,
-      targetPrice ?? null, id);
+      itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, id);
   }
 
   logActivity(id, 'Inquiry updated', inquiry.status, inquiry.status, null, String(updatedBy ?? ''), String(updatedByName ?? updatedBy ?? ''));
@@ -796,7 +793,7 @@ inquiriesRouter.post('/:id/items', (req: Request, res: Response) => {
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
   if (inquiry.status !== 'new_inquiry') { res.status(400).json({ error: 'Inquiry must be in new_inquiry status.' }); return; }
 
-  const { itemName, itemQuantity, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemExtendedDescription, targetPrice, itemImage, doneBy, doneByName } =
+  const { itemName, itemQuantity, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemExtendedDescription, itemImage, doneBy, doneByName } =
     req.body as Record<string, unknown>;
   if (!itemName) { res.status(400).json({ error: 'itemName is required.' }); return; }
 
@@ -804,11 +801,11 @@ inquiriesRouter.post('/:id/items', (req: Request, res: Response) => {
   db.prepare(
     `INSERT INTO inquiry_items (id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
       item_manufacturer_name, item_manufacturer_part_number, item_classification_of_goods,
-      item_extended_description, target_price, item_image)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      item_extended_description, item_image)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(newId, id, itemName, itemQuantity ?? null, itemUom ?? null, itemNeedByDate ?? null,
     itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null,
-    itemExtendedDescription ?? null, targetPrice ?? null, itemImage ?? null);
+    itemExtendedDescription ?? null, itemImage ?? null);
 
   logActivity(id, 'Item added by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true, id: newId });
@@ -824,9 +821,9 @@ inquiriesRouter.patch('/:id/items/:itemId', (req: Request, res: Response) => {
   const item = db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
 
-  const { targetPrice, itemImage, doneBy, doneByName } = req.body as Record<string, unknown>;
-  db.prepare('UPDATE inquiry_items SET target_price = ?, item_image = ? WHERE id = ?')
-    .run(targetPrice ?? null, itemImage ?? null, itemId);
+  const { itemImage, doneBy, doneByName } = req.body as Record<string, unknown>;
+  db.prepare('UPDATE inquiry_items SET item_image = ? WHERE id = ?')
+    .run(itemImage ?? null, itemId);
 
   logActivity(id, 'Item reviewed by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
