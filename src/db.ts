@@ -273,6 +273,13 @@ const ensureNotesItemIdColumn = () => {
   }
 };
 
+const ensurePriceApprovedColumn = () => {
+  const columns = db.prepare("PRAGMA table_info('inquiry_items')").all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === 'price_approved')) {
+    db.exec('ALTER TABLE inquiry_items ADD COLUMN price_approved INTEGER NOT NULL DEFAULT 0');
+  }
+};
+
 ensureProductsSchema();
 ensureInquiriesCoupaColumns();
 ensureInquiryItemsFromExisting();
@@ -280,6 +287,7 @@ ensureItemImageColumn();
 ensureSessionsTable();
 ensureSourcingPicColumn();
 ensureNotesItemIdColumn();
+ensurePriceApprovedColumn();
 normalizeSalesRole();
 seedUsers();
 

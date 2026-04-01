@@ -69,6 +69,7 @@ function mapItem(row: Record<string, unknown>) {
     leadTimeCustomer: row['lead_time_customer'],
     validitasQuotation: row['validitas_quotation'],
     catatanQuotation: row['catatan_quotation'],
+    priceApproved: row['price_approved'] === 1,
   };
 }
 
@@ -194,7 +195,7 @@ function allItemsSourced(items: Array<Record<string, unknown>>): boolean {
 
 function allItemsApproved(items: Array<Record<string, unknown>>): boolean {
   if (items.length === 0) return false;
-  return items.every((item) => item['harga_jual'] != null);
+  return items.every((item) => item['price_approved'] === 1);
 }
 
 function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: string) {
@@ -202,7 +203,7 @@ function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: stri
   if (!inquiry) return;
   if (['deal', 'lost'].includes(inquiry.status)) return;
 
-  const items = db.prepare('SELECT harga_jual FROM inquiry_items WHERE inquiry_id = ?').all(inquiryId) as Array<Record<string, unknown>>;
+  const items = db.prepare('SELECT price_approved FROM inquiry_items WHERE inquiry_id = ?').all(inquiryId) as Array<Record<string, unknown>>;
   const canMoveToQuotation = inquiry.status === 'price_approval' && allItemsApproved(items);
 
   if (canMoveToQuotation) {
@@ -970,7 +971,7 @@ inquiriesRouter.post('/:id/approve', (req: Request, res: Response) => {
 
   db.prepare(
     `UPDATE inquiry_items SET harga_jual = ?, margin = ?, lead_time_customer = ?,
-       validitas_quotation = ?, catatan_quotation = ? WHERE id = ?`
+       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1 WHERE id = ?`
   ).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
 
   logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -998,7 +999,7 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
 
   db.prepare(
     `UPDATE inquiry_items SET harga_jual = ?, margin = ?, lead_time_customer = ?,
-       validitas_quotation = ?, catatan_quotation = ? WHERE id = ?`
+       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1 WHERE id = ?`
   ).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
 
   logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
