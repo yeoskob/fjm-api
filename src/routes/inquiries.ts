@@ -836,8 +836,8 @@ inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req: Request, res: Respo
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'quotation_sent') {
-    res.status(400).json({ error: 'Inquiry must be in quotation_sent status.' }); return;
+  if (!['quotation_sent', 'deal'].includes(inquiry.status)) {
+    res.status(400).json({ error: 'Inquiry must be in quotation_sent or deal status.' }); return;
   }
   const item = db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; harga_beli: number | null } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
