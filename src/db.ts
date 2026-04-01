@@ -150,16 +150,18 @@ db.exec(`
   );
 `);
 
-// Indexes to speed up common lookups (notes/comments, items, activity, dashboards)
-db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_inquiry_items_inquiry_id ON inquiry_items (inquiry_id);
-  CREATE INDEX IF NOT EXISTS idx_activity_log_inquiry_id ON activity_log (inquiry_id);
-  CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_id ON inquiry_notes (inquiry_id);
-  CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_item_id ON inquiry_notes (inquiry_id, item_id);
-  CREATE INDEX IF NOT EXISTS idx_inquiries_created_at ON inquiries (created_at);
-  CREATE INDEX IF NOT EXISTS idx_inquiries_status ON inquiries (status);
-  CREATE INDEX IF NOT EXISTS idx_inquiries_sales_pic ON inquiries (sales_pic);
-`);
+const ensureIndexes = () => {
+  // Indexes to speed up common lookups (notes/comments, items, activity, dashboards)
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_inquiry_items_inquiry_id ON inquiry_items (inquiry_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_log_inquiry_id ON activity_log (inquiry_id);
+    CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_id ON inquiry_notes (inquiry_id);
+    CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_item_id ON inquiry_notes (inquiry_id, item_id);
+    CREATE INDEX IF NOT EXISTS idx_inquiries_created_at ON inquiries (created_at);
+    CREATE INDEX IF NOT EXISTS idx_inquiries_status ON inquiries (status);
+    CREATE INDEX IF NOT EXISTS idx_inquiries_sales_pic ON inquiries (sales_pic);
+  `);
+};
 
 const ensureProductsSchema = () => {
   const columns = db.prepare("PRAGMA table_info('products')").all() as Array<{ name: string }>;
@@ -306,6 +308,7 @@ ensureSessionsTable();
 ensureSourcingPicColumn();
 ensureNotesItemIdColumn();
 ensurePriceApprovedColumn();
+ensureIndexes();
 normalizeSalesRole();
 seedUsers();
 
