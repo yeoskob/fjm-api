@@ -24,6 +24,6 @@ app.use('/products', requireAuth_1.requireAuth, products_1.productsRouter);
 app.use('/inquiries', requireAuth_1.requireAuth, inquiries_1.inquiriesRouter);
 app.use('/settings', requireAuth_1.requireAuth, settings_1.settingsRouter);
 const port = Number(process.env.PORT) || 4000;
-app.listen(port, () => {
-    console.log(`API listening on http://localhost:${port}`);
+app.listen(port, "0.0.0.0", () => {
+    console.log(`API listening on ${port}`);
 });
