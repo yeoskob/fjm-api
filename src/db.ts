@@ -1,10 +1,8 @@
-﻿import Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import { generateId } from './utils/id';
 
-const dbPath = process.env.DB_PATH || 'fjm.db';
-console.log(`[db] Using SQLite database at ${dbPath}`);
 
-export const db = new Database(dbPath);
+export const db = new Database('fjm.db');
 
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
@@ -313,3 +311,4 @@ seedUsers();
 
 // Seed default settings if not present
 db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_margin_pct', '20')`).run();
+
