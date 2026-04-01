@@ -4,6 +4,9 @@ import { generateId } from './utils/id';
 export const db = new Database('fjm.db');
 
 db.pragma('foreign_keys = ON');
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('temp_store = MEMORY');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -144,6 +147,17 @@ db.exec(`
     price REAL,
     FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE CASCADE
   );
+`);
+
+// Indexes to speed up common lookups (notes/comments, items, activity, dashboards)
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_inquiry_items_inquiry_id ON inquiry_items (inquiry_id);
+  CREATE INDEX IF NOT EXISTS idx_activity_log_inquiry_id ON activity_log (inquiry_id);
+  CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_id ON inquiry_notes (inquiry_id);
+  CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_item_id ON inquiry_notes (inquiry_id, item_id);
+  CREATE INDEX IF NOT EXISTS idx_inquiries_created_at ON inquiries (created_at);
+  CREATE INDEX IF NOT EXISTS idx_inquiries_status ON inquiries (status);
+  CREATE INDEX IF NOT EXISTS idx_inquiries_sales_pic ON inquiries (sales_pic);
 `);
 
 const ensureProductsSchema = () => {
