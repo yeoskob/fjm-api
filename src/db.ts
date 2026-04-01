@@ -1,7 +1,10 @@
 ﻿import Database from 'better-sqlite3';
 import { generateId } from './utils/id';
 
-export const db = new Database('fjm.db');
+const dbPath = process.env.DB_PATH || 'fjm.db';
+console.log(`[db] Using SQLite database at ${dbPath}`);
+
+export const db = new Database(dbPath);
 
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');

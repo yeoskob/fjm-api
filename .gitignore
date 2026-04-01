@@ -1,1 +1,5 @@
 node_modules/
+fjm.db
+*.db
+*.db-wal
+*.db-shm
