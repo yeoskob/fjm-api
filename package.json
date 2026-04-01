@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "web": "tsx src/web.ts",
-    "build": "npm rebuild better-sqlite3 && node ./node_modules/typescript/bin/tsc -p tsconfig.json",
+    "build": "node scripts/prebuild.js && node ./node_modules/typescript/bin/tsc -p tsconfig.json",
     "start": "node dist/index.js"
   },
   "keywords": [],
