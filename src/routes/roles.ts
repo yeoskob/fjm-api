@@ -3,7 +3,6 @@ import { db } from '../db';
 
 export const rolesRouter = Router();
 
-const allowedMenus = new Set(['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin']);
 
 const getUserRole = (req: Request): string | undefined => {
   return (req as { user?: { role?: string } }).user?.role;
@@ -21,7 +20,7 @@ const normalizeMenus = (menus: unknown): string[] => {
   if (!Array.isArray(menus)) return [];
   const cleaned = menus
     .map((menu) => String(menu).trim())
-    .filter((menu) => menu && allowedMenus.has(menu));
+    .filter((menu) => menu.length > 0);
   return Array.from(new Set(cleaned));
 };
 
