@@ -590,11 +590,16 @@ function buildCoupaFormatExcel(items: Array<Record<string, unknown>>): Buffer {
     const bidId    = item['coupa_bid_id'] as string | number | null;
     const itemName = item['item_name'] as string | null;
     const itemQty  = item['item_quantity'] as number | null;
-    const approvedPrice = (item['approved_price'] ?? item['harga_jual']) as number | null;
-    const leadTime  = normalizeLeadTime((item['lead_time_customer'] ?? item['lead_time']) as string | number | null);
+    const approvedPrice = (item['approved_price'] ?? item['harga_jual'] ?? item['bid_price_amount']) as number | null;
+    const bidCapacity = (item['bid_capacity'] ?? itemQty) as number | null;
+    const bidCurrency = (item['bid_price_currency'] ?? 'IDR') as string | null;
+    const leadTime  = normalizeLeadTime((item['lead_time_customer'] ?? item['lead_time'] ?? item['bid_lead_time']) as string | number | null);
     const catatan   = item['catatan_quotation'] as string | null;
-    const description = catatan || (item['item_extended_description'] as string | null) || itemName;
+    const description = catatan || (item['item_extended_description'] as string | null) || null;
     const shipping    = (item['term_pembayaran'] as string | null) || (item['bid_shipping_term'] as string | null);
+    const supplierItemName = (item['bid_supplier_item_name'] ?? item['alternate_name'] ?? null) as string | null;
+    const bidItemPartNumber = item['bid_item_part_number'] as string | null;
+    const bidItemDescription = (item['bid_item_description'] ?? description) as string | null;
 
     // Lot columns
     setCell(r, 3, itemQty);  // lot.expected_quantity
@@ -611,12 +616,13 @@ function buildCoupaFormatExcel(items: Array<Record<string, unknown>>): Buffer {
     setCell(r, 14, item['item_fiscal_code'] as string | null);
     // Bid / supplier response columns
     setCell(r, 15, bidId != null ? String(bidId) : null);
-    setCell(r, 16, itemQty);        // bid.capacity
-    setCell(r, 17, approvedPrice);  // bid.price_amount
-    setCell(r, 18, 'IDR');       // bid.price_currency
-    setCell(r, 19, leadTime);    // bid.lead_time
-    setCell(r, 20, (item['alternate_name'] ?? itemName) as string | null);  // bid.supplier_item_name
-    setCell(r, 22, description); // bid.item_description
+    setCell(r, 16, bidCapacity);      // bid.capacity
+    setCell(r, 17, approvedPrice);    // bid.price_amount
+    setCell(r, 18, bidCurrency);      // bid.price_currency
+    setCell(r, 19, leadTime);         // bid.lead_time
+    setCell(r, 20, supplierItemName); // bid.supplier_item_name
+    setCell(r, 21, bidItemPartNumber); // bid.item_part_number
+    setCell(r, 22, bidItemDescription); // bid.item_description
     setCell(r, 23, shipping);    // bid.shipping_term
   });
 
@@ -659,21 +665,27 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
       if (rowIndex == null) continue;
       const row = Number(rowIndex) - 1;
 
-      const approvedPrice = ((item['approved_price'] ?? item['harga_jual']) as number | null);
+      const approvedPrice = ((item['approved_price'] ?? item['harga_jual'] ?? item['bid_price_amount']) as number | null);
       const leadTimeCustomer = item['lead_time_customer'] as string | number | null;
       const leadTimeFallback = item['lead_time'] as string | number | null;
-      const leadTime = normalizeLeadTime(leadTimeCustomer ?? leadTimeFallback);
+      const leadTime = normalizeLeadTime(leadTimeCustomer ?? leadTimeFallback ?? (item['bid_lead_time'] as string | number | null));
       const catatan = (item['catatan_quotation'] as string | null) ?? null;
-      const description = catatan || (item['item_extended_description'] as string | null) || (item['item_name'] as string | null);
+      const description = catatan || (item['item_extended_description'] as string | null) || null;
       const itemName = item['item_name'] as string | null;
       const itemQty = item['item_quantity'] as number | null;
+      const bidCapacity = (item['bid_capacity'] ?? itemQty) as number | null;
+      const bidCurrency = (item['bid_price_currency'] ?? null) as string | null;
+      const supplierItemName = (item['bid_supplier_item_name'] ?? item['alternate_name'] ?? null) as string | null;
+      const bidItemPartNumber = item['bid_item_part_number'] as string | null;
+      const bidItemDescription = (item['bid_item_description'] ?? description) as string | null;
 
-      setSheetCell(sheet, row, fieldMap['bid.capacity'], itemQty ?? null);
+      setSheetCell(sheet, row, fieldMap['bid.capacity'], bidCapacity ?? null);
       setSheetCell(sheet, row, fieldMap['bid.price_amount'], approvedPrice ?? null);
+      setSheetCell(sheet, row, fieldMap['bid.price_currency'], bidCurrency ?? null);
       setSheetCell(sheet, row, fieldMap['bid.lead_time'], leadTime ?? null);
-      const alternateName = item['alternate_name'] as string | null;
-      setSheetCell(sheet, row, fieldMap['bid.supplier_item_name'], alternateName ?? itemName ?? null);
-      setSheetCell(sheet, row, fieldMap['bid.item_description'], description ?? null);
+      setSheetCell(sheet, row, fieldMap['bid.supplier_item_name'], supplierItemName ?? null);
+      setSheetCell(sheet, row, fieldMap['bid.item_part_number'], bidItemPartNumber ?? null);
+      setSheetCell(sheet, row, fieldMap['bid.item_description'], bidItemDescription ?? null);
 
       const shipping = (item['term_pembayaran'] as string | null) || (item['bid_shipping_term'] as string | null);
       if (shipping) setSheetCell(sheet, row, fieldMap['bid.shipping_term'], shipping);
