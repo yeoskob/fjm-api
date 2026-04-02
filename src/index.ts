@@ -10,10 +10,7 @@ import { requireAuth } from './middleware/requireAuth';
 import './db';
 
 const app = express();
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
+app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
 app.get('/health', (_req, res) => {
