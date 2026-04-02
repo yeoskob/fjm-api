@@ -313,9 +313,11 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
+  const startOfMonthIso = startOfMonth.toISOString();
 
+  // Sales stats
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries').get() as { c: number }).c;
-  const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonth.toISOString()) as { c: number }).c;
+  const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal')`).get() as { c: number }).c;
   const deals = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'deal'`).get() as { c: number }).c;
   const lost = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'lost'`).get() as { c: number }).c;
@@ -329,7 +331,24 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
     `SELECT status, COUNT(*) as count FROM inquiries GROUP BY status ORDER BY count DESC`
   ).all() as Array<{ status: string; count: number }>;
 
-  res.json({ total, thisMonth, quotationSent, deals, lost, conversionRate, topSales, statusBreakdown });
+  // Sourcing stats
+  const sourcingPending = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq'`).get() as { c: number }).c;
+  const sourcingItemsThisMonth = (db.prepare(
+    `SELECT COUNT(*) as c FROM activity_log WHERE action = 'Sourcing info submitted' AND created_at >= ?`
+  ).get(startOfMonthIso) as { c: number }).c;
+  const sourcingItemsTotal = (db.prepare(
+    `SELECT COUNT(*) as c FROM activity_log WHERE action = 'Sourcing info submitted'`
+  ).get() as { c: number }).c;
+  const topSourcers = db.prepare(
+    `SELECT done_by_name as sourcing_pic, COUNT(*) as items_count
+     FROM activity_log WHERE action = 'Sourcing info submitted'
+     GROUP BY done_by_name ORDER BY items_count DESC LIMIT 5`
+  ).all() as Array<{ sourcing_pic: string; items_count: number }>;
+
+  res.json({
+    total, thisMonth, quotationSent, deals, lost, conversionRate, topSales, statusBreakdown,
+    sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers,
+  });
 });
 
 // POST /inquiries/import-coupa
