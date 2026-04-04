@@ -14,7 +14,24 @@ db.pragma('wal_autocheckpoint = 1000'); // checkpoint every 1000 pages (~4 MB)
 // Checkpoint any leftover WAL from previous run into the main DB on startup
 db.pragma('wal_checkpoint(TRUNCATE)');
 
+// Detect fresh install BEFORE running any CREATE TABLE, so we can skip
+// already-applied migrations on existing databases.
+const isFreshInstall = (() => {
+  try {
+    db.prepare('SELECT 1 FROM inquiries LIMIT 1').get();
+    return false;
+  } catch {
+    return true;
+  }
+})();
+
+// ─── Base schema (fresh installs only — existing DBs already have these) ────
+
 db.exec(`
+  CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER NOT NULL DEFAULT 0
+  );
+
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -35,23 +52,15 @@ db.exec(`
     tanggal TEXT NOT NULL,
     customer TEXT NOT NULL,
     sales_pic TEXT NOT NULL,
-    nama_barang TEXT NOT NULL,
+    sourcing_pic TEXT,
+    coupa_source INTEGER NOT NULL DEFAULT 0,
+    coupa_file_name TEXT,
+    nama_barang TEXT,
     spesifikasi TEXT,
     qty REAL,
     target_price REAL,
     deadline_quotation TEXT,
     lampiran TEXT,
-    supplier TEXT,
-    harga_beli REAL,
-    lead_time TEXT,
-    moq REAL,
-    stock_availability TEXT,
-    term_pembayaran TEXT,
-    harga_jual REAL,
-    margin REAL,
-    lead_time_customer TEXT,
-    validitas_quotation TEXT,
-    catatan_quotation TEXT,
     status TEXT NOT NULL DEFAULT 'new_inquiry',
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
@@ -77,6 +86,7 @@ db.exec(`
     item_classification_of_goods TEXT,
     item_extended_description TEXT,
     item_fiscal_code TEXT,
+    item_image TEXT,
     coupa_bid_id TEXT,
     bid_capacity REAL,
     bid_price_amount REAL,
@@ -98,6 +108,9 @@ db.exec(`
     lead_time_customer TEXT,
     validitas_quotation TEXT,
     catatan_quotation TEXT,
+    price_approved INTEGER NOT NULL DEFAULT 0,
+    approved_price REAL,
+    alternate_name TEXT,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
   );
 
@@ -130,11 +143,18 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS inquiry_notes (
     id TEXT PRIMARY KEY,
     inquiry_id TEXT NOT NULL,
+    item_id TEXT,
     note TEXT NOT NULL,
     created_by TEXT NOT NULL,
     created_by_name TEXT NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS products (
@@ -161,191 +181,202 @@ db.exec(`
   );
 `);
 
-const ensureIndexes = () => {
-  // Indexes to speed up common lookups (notes/comments, items, activity, dashboards)
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_inquiry_items_inquiry_id ON inquiry_items (inquiry_id);
-    CREATE INDEX IF NOT EXISTS idx_activity_log_inquiry_id ON activity_log (inquiry_id);
-    CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_id ON inquiry_notes (inquiry_id);
-    CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_item_id ON inquiry_notes (inquiry_id, item_id);
-    CREATE INDEX IF NOT EXISTS idx_inquiries_created_at ON inquiries (created_at);
-    CREATE INDEX IF NOT EXISTS idx_inquiries_status ON inquiries (status);
-    CREATE INDEX IF NOT EXISTS idx_inquiries_sales_pic ON inquiries (sales_pic);
-  `);
-};
+// ─── Indexes ─────────────────────────────────────────────────────────────────
 
-const ensureProductsSchema = () => {
-  const columns = db.prepare("PRAGMA table_info('products')").all() as Array<{ name: string }>;
-  const hasApprovedSource = columns.some((c) => c.name === 'approved_source_id');
-  if (!hasApprovedSource) {
-    db.exec('ALTER TABLE products ADD COLUMN approved_source_id TEXT');
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_inquiry_items_inquiry_id    ON inquiry_items  (inquiry_id);
+  CREATE INDEX IF NOT EXISTS idx_activity_log_inquiry_id     ON activity_log   (inquiry_id);
+  CREATE INDEX IF NOT EXISTS idx_inquiry_notes_inquiry_id    ON inquiry_notes  (inquiry_id);
+  CREATE INDEX IF NOT EXISTS idx_inquiry_notes_item_id       ON inquiry_notes  (inquiry_id, item_id);
+  CREATE INDEX IF NOT EXISTS idx_inquiries_created_at        ON inquiries      (created_at);
+  CREATE INDEX IF NOT EXISTS idx_inquiries_status            ON inquiries      (status);
+  CREATE INDEX IF NOT EXISTS idx_inquiries_sales_pic         ON inquiries      (sales_pic);
+`);
+
+// ─── Migrations ───────────────────────────────────────────────────────────────
+// Each migration runs exactly once, identified by its version number.
+// Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
+// Existing DBs run only the migrations they haven't seen yet.
+
+const LATEST_VERSION = 9;
+
+const cols = (table: string): string[] =>
+  (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
+
+const migrations: Array<{ version: number; run: () => void }> = [
+  {
+    // Add Coupa columns to inquiries
+    version: 1,
+    run: () => {
+      if (!cols('inquiries').includes('coupa_source'))
+        db.exec('ALTER TABLE inquiries ADD COLUMN coupa_source INTEGER NOT NULL DEFAULT 0');
+      if (!cols('inquiries').includes('coupa_file_name'))
+        db.exec('ALTER TABLE inquiries ADD COLUMN coupa_file_name TEXT');
+    },
+  },
+  {
+    // Migrate single-item inquiries table into inquiry_items
+    version: 2,
+    run: () => {
+      const itemCount = (db.prepare('SELECT COUNT(*) as count FROM inquiry_items').get() as { count: number }).count;
+      if (itemCount > 0) return;
+      const inquiries = db.prepare('SELECT * FROM inquiries').all() as Array<Record<string, unknown>>;
+      if (inquiries.length === 0) return;
+      const insert = db.prepare(
+        `INSERT INTO inquiry_items (
+          id, inquiry_id, item_name, item_quantity, item_extended_description,
+          target_price, item_need_by_date, supplier, harga_beli, lead_time, moq,
+          stock_availability, term_pembayaran, harga_jual, margin,
+          lead_time_customer, validitas_quotation, catatan_quotation
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      const tx = db.transaction((rows: Array<Record<string, unknown>>) => {
+        for (const row of rows) {
+          insert.run(
+            generateId(), row['id'], row['nama_barang'] ?? null, row['qty'] ?? null,
+            row['spesifikasi'] ?? null, row['target_price'] ?? null,
+            row['deadline_quotation'] ?? null, row['supplier'] ?? null,
+            row['harga_beli'] ?? null, row['lead_time'] ?? null, row['moq'] ?? null,
+            row['stock_availability'] ?? null, row['term_pembayaran'] ?? null,
+            row['harga_jual'] ?? null, row['margin'] ?? null,
+            row['lead_time_customer'] ?? null, row['validitas_quotation'] ?? null,
+            row['catatan_quotation'] ?? null
+          );
+        }
+      });
+      tx(inquiries);
+    },
+  },
+  {
+    // Add item_image to inquiry_items
+    version: 3,
+    run: () => {
+      if (!cols('inquiry_items').includes('item_image'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN item_image TEXT');
+    },
+  },
+  {
+    // Create sessions table
+    version: 4,
+    run: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions (
+          token TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+    },
+  },
+  {
+    // Add sourcing_pic to inquiries
+    version: 5,
+    run: () => {
+      if (!cols('inquiries').includes('sourcing_pic'))
+        db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_pic TEXT');
+    },
+  },
+  {
+    // Add item_id to inquiry_notes
+    version: 6,
+    run: () => {
+      if (!cols('inquiry_notes').includes('item_id'))
+        db.exec('ALTER TABLE inquiry_notes ADD COLUMN item_id TEXT');
+    },
+  },
+  {
+    // Add price approval columns to inquiry_items
+    version: 7,
+    run: () => {
+      const c = cols('inquiry_items');
+      if (!c.includes('price_approved'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN price_approved INTEGER NOT NULL DEFAULT 0');
+      if (!c.includes('approved_price'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN approved_price REAL');
+      if (!c.includes('alternate_name'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN alternate_name TEXT');
+    },
+  },
+  {
+    // Add approved_source_id to products
+    version: 8,
+    run: () => {
+      if (!cols('products').includes('approved_source_id'))
+        db.exec('ALTER TABLE products ADD COLUMN approved_source_id TEXT');
+    },
+  },
+  {
+    // Normalize legacy 'sales' role → 'marketing' (one-time)
+    version: 9,
+    run: () => {
+      db.prepare("UPDATE users SET role = 'marketing' WHERE role = 'sales'").run();
+    },
+  },
+];
+
+const runMigrations = () => {
+  const versionRow = db.prepare('SELECT version FROM schema_version').get() as { version: number } | undefined;
+
+  if (!versionRow) {
+    // schema_version table is empty — decide whether fresh install or legacy DB
+    if (isFreshInstall) {
+      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(LATEST_VERSION);
+      return;
+    } else {
+      db.prepare('INSERT INTO schema_version (version) VALUES (0)').run();
+    }
+  }
+
+  let version = (db.prepare('SELECT version FROM schema_version').get() as { version: number }).version;
+  if (version >= LATEST_VERSION) return;
+
+  for (const m of migrations) {
+    if (m.version > version) {
+      m.run();
+      db.prepare('UPDATE schema_version SET version = ?').run(m.version);
+      version = m.version;
+    }
   }
 };
 
+runMigrations();
+
+// ─── Seed data ────────────────────────────────────────────────────────────────
+
 const ensureDefaultRoles = () => {
   const defaults: Array<{ name: string; menus: string[] }> = [
-    { name: 'admin', menus: ['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin', 'purchasing'] },
-    { name: 'manager', menus: ['pricelist'] },
-    { name: 'sourcing', menus: ['sourcing'] },
+    { name: 'admin',     menus: ['marketing', 'sourcing', 'dashboard', 'pricelist', 'admin', 'purchasing'] },
+    { name: 'manager',   menus: ['pricelist'] },
+    { name: 'sourcing',  menus: ['sourcing'] },
     { name: 'marketing', menus: ['marketing'] },
   ];
 
   const insert = db.prepare('INSERT OR IGNORE INTO roles (name, menus, created_at) VALUES (?, ?, ?)');
   const now = new Date().toISOString();
-  const tx = db.transaction((rows: Array<{ name: string; menus: string[] }>) => {
-    for (const row of rows) {
-      insert.run(row.name, JSON.stringify(row.menus), now);
-    }
+  const tx = db.transaction((rows: typeof defaults) => {
+    for (const row of rows) insert.run(row.name, JSON.stringify(row.menus), now);
   });
-
   tx(defaults);
-};
-
-const ensureInquiriesCoupaColumns = () => {
-  const columns = db.prepare("PRAGMA table_info('inquiries')").all() as Array<{ name: string }>;
-  const names = columns.map((c) => c.name);
-  if (!names.includes('coupa_source')) {
-    db.exec('ALTER TABLE inquiries ADD COLUMN coupa_source INTEGER NOT NULL DEFAULT 0');
-  }
-  if (!names.includes('coupa_file_name')) {
-    db.exec('ALTER TABLE inquiries ADD COLUMN coupa_file_name TEXT');
-  }
 };
 
 const seedUsers = () => {
   const count = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
-  if (count.count > 0) {
-    return;
-  }
+  if (count.count > 0) return;
 
   const insert = db.prepare(
     'INSERT INTO users (id, name, username, password, role) VALUES (@id, @name, @username, @password, @role)'
   );
-
   const seed = [
-    { id: generateId(), name: 'Administrator', username: 'admin', password: 'admin', role: 'admin' },
-    { id: generateId(), name: 'Sourcing User', username: 'sourcing', password: 'sourcing', role: 'sourcing' },
-    { id: generateId(), name: 'Marketing User', username: 'marketing', password: 'marketing', role: 'marketing' },
-    { id: generateId(), name: 'Sales User', username: 'sales', password: 'sales', role: 'marketing' },
+    { id: generateId(), name: 'Administrator',  username: 'admin',     password: 'admin',     role: 'admin'     },
+    { id: generateId(), name: 'Sourcing User',   username: 'sourcing',  password: 'sourcing',  role: 'sourcing'  },
+    { id: generateId(), name: 'Marketing User',  username: 'marketing', password: 'marketing', role: 'marketing' },
+    { id: generateId(), name: 'Sales User',      username: 'sales',     password: 'sales',     role: 'marketing' },
   ];
 
-  const tx = db.transaction((rows) => {
-    for (const row of rows) {
-      insert.run(row);
-    }
-  });
-
+  const tx = db.transaction((rows: typeof seed) => { for (const row of rows) insert.run(row); });
   tx(seed);
 };
 
-const normalizeSalesRole = () => {
-  db.prepare("UPDATE users SET role = 'marketing' WHERE role = 'sales'").run();
-};
-
-const ensureInquiryItemsFromExisting = () => {
-  const itemCount = db.prepare('SELECT COUNT(*) as count FROM inquiry_items').get() as { count: number };
-  if (itemCount.count > 0) {
-    return;
-  }
-
-  const inquiries = db.prepare('SELECT * FROM inquiries').all() as Array<Record<string, unknown>>;
-  if (inquiries.length === 0) {
-    return;
-  }
-
-  const insert = db.prepare(
-    `INSERT INTO inquiry_items (
-      id, inquiry_id, item_name, item_quantity, item_extended_description, target_price, item_need_by_date,
-      supplier, harga_beli, lead_time, moq, stock_availability, term_pembayaran, harga_jual, margin,
-      lead_time_customer, validitas_quotation, catatan_quotation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-
-  const tx = db.transaction((rows: Array<Record<string, unknown>>) => {
-    for (const row of rows) {
-      insert.run(
-        generateId(),
-        row['id'],
-        row['nama_barang'] ?? null,
-        row['qty'] ?? null,
-        row['spesifikasi'] ?? null,
-        row['target_price'] ?? null,
-        row['deadline_quotation'] ?? null,
-        row['supplier'] ?? null,
-        row['harga_beli'] ?? null,
-        row['lead_time'] ?? null,
-        row['moq'] ?? null,
-        row['stock_availability'] ?? null,
-        row['term_pembayaran'] ?? null,
-        row['harga_jual'] ?? null,
-        row['margin'] ?? null,
-        row['lead_time_customer'] ?? null,
-        row['validitas_quotation'] ?? null,
-        row['catatan_quotation'] ?? null
-      );
-    }
-  });
-
-  tx(inquiries);
-};
-
-const ensureItemImageColumn = () => {
-  const columns = db.prepare("PRAGMA table_info('inquiry_items')").all() as Array<{ name: string }>;
-  if (!columns.some((c) => c.name === 'item_image')) {
-    db.exec('ALTER TABLE inquiry_items ADD COLUMN item_image TEXT');
-  }
-};
-
-const ensureSessionsTable = () => {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      token TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-};
-
-const ensureSourcingPicColumn = () => {
-  const columns = db.prepare("PRAGMA table_info('inquiries')").all() as Array<{ name: string }>;
-  if (!columns.some((c) => c.name === 'sourcing_pic')) {
-    db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_pic TEXT');
-  }
-};
-
-const ensureNotesItemIdColumn = () => {
-  const columns = db.prepare("PRAGMA table_info('inquiry_notes')").all() as Array<{ name: string }>;
-  if (!columns.some((c) => c.name === 'item_id')) {
-    db.exec('ALTER TABLE inquiry_notes ADD COLUMN item_id TEXT');
-  }
-};
-
-const ensurePriceApprovedColumn = () => {
-  const columns = db.prepare("PRAGMA table_info('inquiry_items')").all() as Array<{ name: string }>;
-  if (!columns.some((c) => c.name === 'price_approved')) {
-    db.exec('ALTER TABLE inquiry_items ADD COLUMN price_approved INTEGER NOT NULL DEFAULT 0');
-  }
-  if (!columns.some((c) => c.name === 'approved_price')) {
-    db.exec('ALTER TABLE inquiry_items ADD COLUMN approved_price REAL');
-  }
-  if (!columns.some((c) => c.name === 'alternate_name')) {
-    db.exec('ALTER TABLE inquiry_items ADD COLUMN alternate_name TEXT');
-  }
-};
-
-ensureProductsSchema();
-ensureInquiriesCoupaColumns();
-ensureInquiryItemsFromExisting();
-ensureItemImageColumn();
-ensureSessionsTable();
-ensureSourcingPicColumn();
-ensureNotesItemIdColumn();
-ensurePriceApprovedColumn();
-ensureIndexes();
 ensureDefaultRoles();
-normalizeSalesRole();
 seedUsers();
-
-// Seed default settings if not present
 db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_margin_pct', '20')`).run();
-

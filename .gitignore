@@ -1,1 +1,8 @@
 node_modules/
+dist/
+.env
+
+# SQLite database files — never commit, never overwrite on deploy
+fjm.db
+fjm.db-shm
+fjm.db-wal
