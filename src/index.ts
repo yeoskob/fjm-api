@@ -7,6 +7,7 @@ import { inquiriesRouter } from './routes/inquiries';
 import { rolesRouter } from './routes/roles';
 import { settingsRouter } from './routes/settings';
 import { requireAuth } from './middleware/requireAuth';
+console.log('DB_PATH:', process.env['DB_PATH'] ?? '(not set, using default)');
 import './db';
 
 const app = express();
