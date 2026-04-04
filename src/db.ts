@@ -1,13 +1,18 @@
 import Database from 'better-sqlite3';
+import path from 'path';
 import { generateId } from './utils/id';
 
-
-export const db = new Database('fjm.db');
+const DB_PATH = path.resolve(__dirname, '../fjm.db');
+export const db = new Database(DB_PATH);
 
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL');
 db.pragma('temp_store = MEMORY');
+db.pragma('wal_autocheckpoint = 1000'); // checkpoint every 1000 pages (~4 MB)
+
+// Checkpoint any leftover WAL from previous run into the main DB on startup
+db.pragma('wal_checkpoint(TRUNCATE)');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
