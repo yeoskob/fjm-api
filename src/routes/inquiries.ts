@@ -909,7 +909,7 @@ inquiriesRouter.post('/:id/sourcing-info', (req: Request, res: Response) => {
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
 
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'rfq') {
+  if (!['rfq', 'price_approval'].includes(inquiry.status)) {
     res.status(400).json({ error: 'Inquiry must be in RFQ status.' }); return;
   }
 
@@ -920,8 +920,9 @@ inquiriesRouter.post('/:id/sourcing-info', (req: Request, res: Response) => {
     res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' }); return;
   }
 
-  const item = db.prepare('SELECT id FROM inquiry_items WHERE inquiry_id = ? ORDER BY id LIMIT 1').get(id) as { id: string } | undefined;
+  const item = db.prepare('SELECT id, price_approved FROM inquiry_items WHERE inquiry_id = ? ORDER BY id LIMIT 1').get(id) as { id: string; price_approved: number } | undefined;
   if (!item) { res.status(400).json({ error: 'No items found.' }); return; }
+  if (item.price_approved) { res.status(400).json({ error: 'Item already approved, cannot edit.' }); return; }
 
   db.prepare(
     `UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
@@ -937,12 +938,13 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'rfq') {
+  if (!['rfq', 'price_approval'].includes(inquiry.status)) {
     res.status(400).json({ error: 'Inquiry must be in RFQ status.' }); return;
   }
 
-  const item = db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string } | undefined;
+  const item = db.prepare('SELECT id, price_approved FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; price_approved: number } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
+  if (item.price_approved) { res.status(400).json({ error: 'Item already approved, cannot edit.' }); return; }
 
   const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, alternateName, doneBy, doneByName } =
     req.body as Record<string, unknown>;
@@ -976,6 +978,30 @@ inquiriesRouter.post('/:id/send-to-price-approval', (req: Request, res: Response
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
     .run('price_approval', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Sent to Price Approval', 'rfq', 'price_approval', note ? String(note) : null, String(doneBy), String(doneByName ?? doneBy));
+  res.json({ ok: true });
+});
+
+// POST /inquiries/:id/return-to-sourcing — Pricelist sends unfilled items back to sourcing
+inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
+  if (inquiry.status !== 'price_approval') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  }
+
+  const items = db.prepare('SELECT price_approved, harga_beli FROM inquiry_items WHERE inquiry_id = ?').all(id) as Array<{ price_approved: number; harga_beli: number | null }>;
+  const hasUnsourced = items.some((i) => !i.price_approved && !i.harga_beli);
+  if (!hasUnsourced) {
+    res.status(400).json({ error: 'No unfilled items to return to sourcing.' }); return;
+  }
+
+  const { doneBy, doneByName } = req.body as Record<string, unknown>;
+  if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
+
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .run('rfq', new Date().toISOString(), String(doneBy), id);
+  logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
   res.json({ ok: true });
 });
 
