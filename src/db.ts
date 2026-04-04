@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { generateId } from './utils/id';
 
-const DB_PATH = path.resolve(__dirname, '../fjm.db');
+const DB_PATH = process.env['DB_PATH'] ?? path.resolve(__dirname, '../fjm.db');
+
 export const db = new Database(DB_PATH);
 
 db.pragma('foreign_keys = ON');
