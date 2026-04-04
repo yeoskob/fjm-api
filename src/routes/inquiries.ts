@@ -970,11 +970,6 @@ inquiriesRouter.post('/:id/send-to-price-approval', (req: Request, res: Response
     res.status(400).json({ error: 'Inquiry must be in rfq status.' }); return;
   }
 
-  const items = db.prepare('SELECT supplier, harga_beli, lead_time FROM inquiry_items WHERE inquiry_id = ?').all(id) as Array<Record<string, unknown>>;
-  if (!allItemsSourced(items)) {
-    res.status(400).json({ error: 'All items must be sourced before sending to price approval.' }); return;
-  }
-
   const { doneBy, doneByName, note } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
