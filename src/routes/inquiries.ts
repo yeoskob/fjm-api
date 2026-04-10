@@ -727,7 +727,7 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
 
 // POST /inquiries
 inquiriesRouter.post('/', (req: Request, res: Response) => {
-  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, createdBy, createdByName } =
+  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, createdBy, createdByName } =
     req.body as Record<string, unknown>;
 
   if (!customer || !salesPic || !namaBarang || !createdBy) {
@@ -750,11 +750,11 @@ inquiriesRouter.post('/', (req: Request, res: Response) => {
     `INSERT INTO inquiry_items (
       id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
       item_manufacturer_name, item_manufacturer_part_number, item_classification_of_goods,
-      item_extended_description
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      item_extended_description, item_image
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(generateId(), id, namaBarang, qty ?? null, itemUom ?? null, needByDate,
     itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null,
-    spesifikasi ?? null);
+    spesifikasi ?? null, itemImage ?? null);
 
   logActivity(id, 'Inquiry created', null, 'new_inquiry', null, String(createdBy), String(createdByName ?? createdBy));
 
