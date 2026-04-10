@@ -44,6 +44,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS roles (
     name TEXT PRIMARY KEY,
     menus TEXT NOT NULL,
+    tabs TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
   );
 
@@ -199,7 +200,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 9;
+const LATEST_VERSION = 10;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -311,6 +312,15 @@ const migrations: Array<{ version: number; run: () => void }> = [
     version: 9,
     run: () => {
       db.prepare("UPDATE users SET role = 'marketing' WHERE role = 'sales'").run();
+    },
+  },
+  {
+    // Add tabs column to roles
+    version: 10,
+    run: () => {
+      const cols = (db.prepare("PRAGMA table_info(roles)").all() as Array<{ name: string }>).map((r) => r.name);
+      if (!cols.includes('tabs'))
+        db.exec("ALTER TABLE roles ADD COLUMN tabs TEXT NOT NULL DEFAULT '{}'");
     },
   },
 ];

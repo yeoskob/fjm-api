@@ -20,17 +20,20 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return;
   }
 
-  const roleRow = db.prepare('SELECT menus FROM roles WHERE name = ?').get(user.role) as { menus: string } | undefined;
+  const roleRow = db.prepare('SELECT menus, tabs FROM roles WHERE name = ?').get(user.role) as { menus: string; tabs: string } | undefined;
   let menus: string[] = [];
+  let tabs: Record<string, string[]> = {};
   if (roleRow?.menus) {
     try {
       const parsed = JSON.parse(roleRow.menus);
-      if (Array.isArray(parsed)) {
-        menus = parsed.map((m) => String(m));
-      }
-    } catch {
-      menus = [];
-    }
+      if (Array.isArray(parsed)) menus = parsed.map((m) => String(m));
+    } catch { menus = []; }
+  }
+  if (roleRow?.tabs) {
+    try {
+      const parsed = JSON.parse(roleRow.tabs);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) tabs = parsed;
+    } catch { tabs = {}; }
   }
 
   const token = db.transaction((userId: string) => {
@@ -41,7 +44,7 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return nextToken;
   })(user.id);
 
-  res.json({ id: user.id, name: user.name, username: user.username, role: user.role, menus, token });
+  res.json({ id: user.id, name: user.name, username: user.username, role: user.role, menus, tabs, token });
 });
 
 authRouter.post('/logout', (req: Request, res: Response) => {
