@@ -6,3 +6,6 @@ dist/
 fjm.db
 fjm.db-shm
 fjm.db-wal
+
+# Local AI tooling
+.claude/

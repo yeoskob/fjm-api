@@ -206,12 +206,12 @@ function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: stri
   if (['deal', 'lost', 'ready_to_purchase'].includes(inquiry.status)) return;
 
   const items = db.prepare('SELECT price_approved FROM inquiry_items WHERE inquiry_id = ?').all(inquiryId) as Array<Record<string, unknown>>;
-  const canMoveToQuotation = inquiry.status === 'price_approval' && allItemsApproved(items);
+  const canMoveToPriceApproved = inquiry.status === 'price_approval' && allItemsApproved(items);
 
-  if (canMoveToQuotation) {
+  if (canMoveToPriceApproved) {
     db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-      .run('quotation_sent', new Date().toISOString(), doneBy, inquiryId);
-    logActivity(inquiryId, 'Auto status update', inquiry.status, 'quotation_sent', null, doneBy, doneByName);
+      .run('price_approved', new Date().toISOString(), doneBy, inquiryId);
+    logActivity(inquiryId, 'Auto status update', inquiry.status, 'price_approved', null, doneBy, doneByName);
   }
 }
 
@@ -881,25 +881,30 @@ inquiriesRouter.patch('/:id/need-by-date', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// PATCH /inquiries/:id/items/:itemId/harga-jual — Sales updates selling price on quotation_sent
+// PATCH /inquiries/:id/items/:itemId/harga-jual — Sales/Marketing updates selling price
 inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req: Request, res: Response) => {
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (!['quotation_sent', 'deal'].includes(inquiry.status)) {
-    res.status(400).json({ error: 'Inquiry must be in quotation_sent or deal status.' }); return;
+  if (!['price_approved', 'quotation_sent', 'deal'].includes(inquiry.status)) {
+    res.status(400).json({ error: 'Inquiry must be in price_approved, quotation_sent, or deal status.' }); return;
   }
-  const item = db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; harga_beli: number | null } | undefined;
+  const item = db.prepare('SELECT id, harga_beli, harga_jual FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; harga_beli: number | null; harga_jual: number | null } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
 
   const { hargaJual, doneBy, doneByName } = req.body as Record<string, unknown>;
   if (!hargaJual) { res.status(400).json({ error: 'hargaJual is required.' }); return; }
 
+  // In price_approved, marketing cannot set price lower than the manager-approved harga_jual
+  if (inquiry.status === 'price_approved' && item.harga_jual != null && Number(hargaJual) < item.harga_jual) {
+    res.status(400).json({ error: `Price cannot be lower than the approved price (${item.harga_jual}).` }); return;
+  }
+
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
   db.prepare('UPDATE inquiry_items SET approved_price = ?, margin = ? WHERE id = ?')
     .run(hargaJual, margin, itemId);
 
-  logActivity(id, 'Harga jual updated by sales', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  logActivity(id, 'Harga jual updated by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
 });
 
@@ -1002,6 +1007,44 @@ inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) =>
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
     .run('rfq', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
+  res.json({ ok: true });
+});
+
+// POST /inquiries/:id/send-to-sent — Marketing sends quotation to customer (price_approved → quotation_sent)
+inquiriesRouter.post('/:id/send-to-sent', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
+  if (inquiry.status !== 'price_approved') {
+    res.status(400).json({ error: 'Inquiry must be in price_approved status.' }); return;
+  }
+
+  const { doneBy, doneByName } = req.body as Record<string, unknown>;
+  if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
+
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .run('quotation_sent', new Date().toISOString(), String(doneBy), id);
+  logActivity(id, 'Quotation sent to customer', 'price_approved', 'quotation_sent', null, String(doneBy), String(doneByName ?? doneBy));
+  res.json({ ok: true });
+});
+
+// POST /inquiries/:id/return-to-price-approval — Marketing sends back for price review (price_approved → price_approval)
+inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
+  if (inquiry.status !== 'price_approved') {
+    res.status(400).json({ error: 'Inquiry must be in price_approved status.' }); return;
+  }
+
+  const { doneBy, doneByName } = req.body as Record<string, unknown>;
+  if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
+
+  // Reset all item price_approved flags so manager re-reviews
+  db.prepare('UPDATE inquiry_items SET price_approved = 0 WHERE inquiry_id = ?').run(id);
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .run('price_approval', new Date().toISOString(), String(doneBy), id);
+  logActivity(id, 'Returned to Price Approval for review', 'price_approved', 'price_approval', null, String(doneBy), String(doneByName ?? doneBy));
   res.json({ ok: true });
 });
 
