@@ -1022,6 +1022,16 @@ inquiriesRouter.post('/:id/send-to-sent', (req: Request, res: Response) => {
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
+  // Guard: block if any item's current price (approved_price) is below the manager-approved floor (harga_jual)
+  const items = db.prepare('SELECT item_name, harga_jual, approved_price FROM inquiry_items WHERE inquiry_id = ?')
+    .all(id) as Array<{ item_name: string | null; harga_jual: number | null; approved_price: number | null }>;
+  const belowFloor = items.filter((i) => i.harga_jual != null && i.approved_price != null && i.approved_price < i.harga_jual);
+  if (belowFloor.length > 0) {
+    const names = belowFloor.map((i) => i.item_name ?? 'unknown').join(', ');
+    res.status(400).json({ error: `${belowFloor.length} item(s) have a price below the approved floor: ${names}. Send for Price Review first.` });
+    return;
+  }
+
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
     .run('quotation_sent', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Quotation sent to customer', 'price_approved', 'quotation_sent', null, String(doneBy), String(doneByName ?? doneBy));
@@ -1069,9 +1079,9 @@ inquiriesRouter.post('/:id/approve', (req: Request, res: Response) => {
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
 
   db.prepare(
-    `UPDATE inquiry_items SET approved_price = ?, margin = ?, lead_time_customer = ?,
+    `UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1 WHERE id = ?`
-  ).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
+  ).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
 
   logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -1097,9 +1107,9 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
 
   db.prepare(
-    `UPDATE inquiry_items SET approved_price = ?, margin = ?, lead_time_customer = ?,
+    `UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1 WHERE id = ?`
-  ).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
+  ).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
 
   logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
