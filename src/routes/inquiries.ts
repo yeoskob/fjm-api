@@ -1088,11 +1088,54 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
-  // Reset all item price_approved flags so manager re-reviews
-  db.prepare('UPDATE inquiry_items SET price_approved = 0 WHERE inquiry_id = ?').run(id);
+  const items = db.prepare(
+    `SELECT id, harga_beli, harga_jual, approved_price
+     FROM inquiry_items
+     WHERE inquiry_id = ?`
+  ).all(id) as Array<{ id: string; harga_beli: number | null; harga_jual: number | null; approved_price: number | null }>;
+
+  const itemsNeedingReview = items.filter((item) =>
+    item.harga_jual != null &&
+    item.approved_price != null &&
+    item.approved_price < item.harga_jual
+  );
+
+  if (!itemsNeedingReview.length) {
+    res.status(400).json({ error: 'No item needs price review.' }); return;
+  }
+
+  const reviewIds = new Set(itemsNeedingReview.map((item) => item.id));
+  const setNeedsReview = db.prepare(
+    `UPDATE inquiry_items
+     SET harga_jual = ?, approved_price = ?, margin = ?, price_approved = 0
+     WHERE id = ?`
+  );
+  const keepApproved = db.prepare('UPDATE inquiry_items SET price_approved = 1 WHERE id = ?');
+
+  const applyReviewRouting = db.transaction(() => {
+    for (const item of items) {
+      if (reviewIds.has(item.id)) {
+        const nextPrice = Number(item.approved_price);
+        const nextMargin = item.harga_beli != null ? nextPrice - item.harga_beli : null;
+        setNeedsReview.run(nextPrice, nextPrice, nextMargin, item.id);
+      } else {
+        keepApproved.run(item.id);
+      }
+    }
+  });
+  applyReviewRouting();
+
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
     .run('price_approval', new Date().toISOString(), String(doneBy), id);
-  logActivity(id, 'Returned to Price Approval for review', 'price_approved', 'price_approval', null, String(doneBy), String(doneByName ?? doneBy));
+  logActivity(
+    id,
+    `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
+    'price_approved',
+    'price_approval',
+    null,
+    String(doneBy),
+    String(doneByName ?? doneBy)
+  );
   res.json({ ok: true });
 });
 
