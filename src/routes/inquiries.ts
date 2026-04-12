@@ -203,18 +203,11 @@ function allItemsApproved(items: Array<Record<string, unknown>>): boolean {
 }
 
 function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: string) {
-  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(inquiryId) as { id: string; status: string } | undefined;
-  if (!inquiry) return;
-  if (['deal', 'lost', 'ready_to_purchase'].includes(inquiry.status)) return;
-
-  const items = db.prepare('SELECT price_approved FROM inquiry_items WHERE inquiry_id = ?').all(inquiryId) as Array<Record<string, unknown>>;
-  const canMoveToPriceApproved = inquiry.status === 'price_approval' && allItemsApproved(items);
-
-  if (canMoveToPriceApproved) {
-    db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-      .run('price_approved', new Date().toISOString(), doneBy, inquiryId);
-    logActivity(inquiryId, 'Auto status update', inquiry.status, 'price_approved', null, doneBy, doneByName);
-  }
+  // Manual transition is now required for price_approval -> price_approved.
+  // Keep this function as a no-op because older call sites still invoke it.
+  void inquiryId;
+  void doneBy;
+  void doneByName;
 }
 
 // GET /inquiries
@@ -1135,6 +1128,24 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     String(doneBy),
     String(doneByName ?? doneBy)
   );
+  res.json({ ok: true });
+});
+
+// POST /inquiries/:id/send-to-price-approved — Manager manually submits to Price Approved
+inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
+  if (inquiry.status !== 'price_approval') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  }
+
+  const { doneBy, doneByName } = req.body as Record<string, unknown>;
+  if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
+
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .run('price_approved', new Date().toISOString(), String(doneBy), id);
+  logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
   res.json({ ok: true });
 });
 
