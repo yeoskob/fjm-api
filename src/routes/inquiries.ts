@@ -1313,6 +1313,19 @@ inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) 
     String(doneByName ?? doneBy)
   );
 
+  db.prepare(
+    `INSERT INTO inquiry_notes (id, inquiry_id, item_id, note, created_by, created_by_name, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    generateId(),
+    id,
+    itemId,
+    `Reject reason: ${rejectReason}`,
+    String(doneBy),
+    String(doneByName ?? doneBy),
+    new Date().toISOString()
+  );
+
   res.json({ ok: true });
 });
 
