@@ -1143,9 +1143,6 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   }
 
   const reopeningRejectedCount = itemsNeedingReview.filter((item) => item.review_status === 'rejected').length;
-  if (reopeningRejectedCount > 0 && !String(negotiationReason ?? '').trim()) {
-    res.status(400).json({ error: 'negotiationReason is required to reopen rejected item(s).' }); return;
-  }
 
   const reviewIds = new Set(itemsNeedingReview.map((item) => item.id));
   const setNeedsReview = db.prepare('UPDATE inquiry_items SET price_approved = 0, needs_price_review = 1, review_status = ?, review_round = ? WHERE id = ?');
@@ -1170,7 +1167,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
     'price_approved',
     'price_approval',
-    reopeningRejectedCount > 0 ? `Negotiation reopen: ${String(negotiationReason).trim()}` : null,
+    (reopeningRejectedCount > 0 && String(negotiationReason ?? '').trim()) ? `Negotiation reopen: ${String(negotiationReason).trim()}` : null,
     String(doneBy),
     String(doneByName ?? doneBy)
   );
