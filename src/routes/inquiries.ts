@@ -291,6 +291,26 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
     `SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Sourcing info submitted' AND created_at >= ?`
   ).get(name, startOfMonthIso) as { c: number }).c;
 
+  // Per-user item state breakdown — scoped to RFQs assigned to this sourcing user
+  const userItemsTerisi = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_pic = ?
+       AND ii.supplier IS NOT NULL AND ii.harga_beli IS NOT NULL AND ii.lead_time IS NOT NULL
+       AND ii.sourcing_missed = 0`
+  ).get(name) as { c: number }).c;
+  const userItemsMissed = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_pic = ? AND ii.sourcing_missed = 1`
+  ).get(name) as { c: number }).c;
+  const userItemsTidakTerisi = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_pic = ?
+       AND (ii.supplier IS NULL OR ii.harga_beli IS NULL OR ii.lead_time IS NULL)`
+  ).get(name) as { c: number }).c;
+
   // Manager stats
   const approvalsTotal = (db.prepare(
     `SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved'`
@@ -304,7 +324,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
 
   res.json({
     salesStats: { total, thisMonth: thisMonthSales, deals, lost, active, conversionRate, statusBreakdown },
-    sourcingStats: { itemsSourced, inquiriesContributed, thisMonth: thisMonthSourcing },
+    sourcingStats: { itemsSourced, inquiriesContributed, thisMonth: thisMonthSourcing, itemsTerisi: userItemsTerisi, itemsMissed: userItemsMissed, itemsTidakTerisi: userItemsTidakTerisi },
     managerStats: { approvalsTotal, approvalsThisMonth, inquiriesApproved },
   });
 });
