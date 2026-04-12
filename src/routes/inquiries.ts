@@ -928,11 +928,6 @@ inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req: Request, res: Respo
   const { hargaJual, doneBy, doneByName } = req.body as Record<string, unknown>;
   if (!hargaJual) { res.status(400).json({ error: 'hargaJual is required.' }); return; }
 
-  // In price_approved, marketing cannot set price lower than the manager-approved harga_jual
-  if (inquiry.status === 'price_approved' && item.harga_jual != null && Number(hargaJual) < item.harga_jual) {
-    res.status(400).json({ error: `Price cannot be lower than the approved price (${item.harga_jual}).` }); return;
-  }
-
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
   db.prepare('UPDATE inquiry_items SET approved_price = ?, margin = ? WHERE id = ?')
     .run(hargaJual, margin, itemId);
