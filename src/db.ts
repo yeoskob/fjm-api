@@ -369,6 +369,16 @@ const runMigrations = () => {
 
 runMigrations();
 
+// Safety net for environments where schema_version is ahead but a column is missing.
+const ensureInquiryItemsColumns = () => {
+  const c = cols('inquiry_items');
+  if (!c.includes('needs_price_review')) {
+    db.exec('ALTER TABLE inquiry_items ADD COLUMN needs_price_review INTEGER NOT NULL DEFAULT 0');
+  }
+};
+
+ensureInquiryItemsColumns();
+
 // ─── Seed data ────────────────────────────────────────────────────────────────
 
 const ensureDefaultRoles = () => {
