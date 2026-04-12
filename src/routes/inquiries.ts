@@ -346,9 +346,21 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
      GROUP BY done_by_name ORDER BY items_count DESC LIMIT 5`
   ).all() as Array<{ sourcing_pic: string; items_count: number }>;
 
+  // Item state breakdown
+  const itemsTerisi = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiry_items WHERE supplier IS NOT NULL AND harga_beli IS NOT NULL AND lead_time IS NOT NULL AND sourcing_missed = 0`
+  ).get() as { c: number }).c;
+  const itemsMissed = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiry_items WHERE sourcing_missed = 1`
+  ).get() as { c: number }).c;
+  const itemsTidakTerisi = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiry_items WHERE (supplier IS NULL OR harga_beli IS NULL OR lead_time IS NULL)`
+  ).get() as { c: number }).c;
+
   res.json({
     total, thisMonth, quotationSent, deals, lost, conversionRate, topSales, statusBreakdown,
     sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers,
+    itemsTerisi, itemsTidakTerisi, itemsMissed,
   });
 });
 
