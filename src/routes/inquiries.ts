@@ -73,6 +73,8 @@ function mapItem(row: Record<string, unknown>) {
     catatanQuotation: row['catatan_quotation'],
     priceApproved: row['price_approved'] === 1,
     needsPriceReview: row['needs_price_review'] === 1,
+    reviewStatus: row['review_status'] ?? 'pending',
+    reviewRound: Number(row['review_round'] ?? 0),
     sourcingMissed: row['sourcing_missed'] === 1,
   };
 }
@@ -92,6 +94,8 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
     createdBy: row['created_by'],
     updatedAt: row['updated_at'],
     updatedBy: row['updated_by'],
+    sentIncomplete: row['sent_incomplete'] === 1,
+    sentIncompleteReason: row['sent_incomplete_reason'] ?? null,
     needByDate: row['deadline_quotation'] ?? null,
     items: items.map(mapItem),
   };
@@ -266,6 +270,12 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   // Sales stats
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ?').get(name) as { c: number }).c;
   const thisMonthSales = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND created_at >= ?').get(name, startOfMonthIso) as { c: number }).c;
+  const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status IN ('quotation_sent','deal')`).get(name) as { c: number }).c;
+  const sentIncomplete = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiries
+     WHERE sales_pic = ? AND status IN ('quotation_sent','deal') AND sent_incomplete = 1`
+  ).get(name) as { c: number }).c;
+  const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
   const deals = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'deal'`).get(name) as { c: number }).c;
   const lost = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'lost'`).get(name) as { c: number }).c;
   const active = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status NOT IN ('deal','lost')`).get(name) as { c: number }).c;
@@ -317,7 +327,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   ).get(name) as { c: number }).c;
 
   res.json({
-    salesStats: { total, thisMonth: thisMonthSales, deals, lost, active, conversionRate, statusBreakdown },
+    salesStats: { total, thisMonth: thisMonthSales, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, active, conversionRate, statusBreakdown },
     sourcingStats: { itemsSourced, inquiriesContributed, thisMonth: thisMonthSourcing, itemsTerisi: userItemsTerisi, itemsMissed: userItemsMissed, itemsTidakTerisi: userItemsTidakTerisi },
     managerStats: { approvalsTotal, approvalsThisMonth, inquiriesApproved },
   });
@@ -334,6 +344,10 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries').get() as { c: number }).c;
   const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal')`).get() as { c: number }).c;
+  const sentIncomplete = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal') AND sent_incomplete = 1`
+  ).get() as { c: number }).c;
+  const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
   const deals = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'deal'`).get() as { c: number }).c;
   const lost = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'lost'`).get() as { c: number }).c;
   const conversionRate = total > 0 ? +((deals / total) * 100).toFixed(1) : 0;
@@ -372,7 +386,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ sourcing_pic: string; items_count: number }>;
 
   res.json({
-    total, thisMonth, quotationSent, deals, lost, conversionRate, topSales, statusBreakdown,
+    total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, conversionRate, topSales, statusBreakdown,
     sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers,
     itemsTerisi, itemsTidakTerisi, itemsMissed,
   });
@@ -916,7 +930,9 @@ inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req: Request, res: Respo
   if (!['price_approved', 'quotation_sent', 'deal'].includes(inquiry.status)) {
     res.status(400).json({ error: 'Inquiry must be in price_approved, quotation_sent, or deal status.' }); return;
   }
-  const item = db.prepare('SELECT id, harga_beli, approved_price FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; harga_beli: number | null; approved_price: number | null } | undefined;
+  const item = db.prepare(
+    'SELECT id, harga_beli, approved_price, review_status FROM inquiry_items WHERE id = ? AND inquiry_id = ?'
+  ).get(itemId, id) as { id: string; harga_beli: number | null; approved_price: number | null; review_status: string | null } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
 
   const { hargaJual, doneBy, doneByName } = req.body as Record<string, unknown>;
@@ -925,8 +941,12 @@ inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req: Request, res: Respo
   const nextPrice = Number(hargaJual);
   const margin = item.harga_beli != null ? nextPrice - item.harga_beli : null;
   const needsReview = item.approved_price != null ? (nextPrice < item.approved_price ? 1 : 0) : 0;
-  db.prepare('UPDATE inquiry_items SET harga_jual = ?, margin = ?, needs_price_review = ? WHERE id = ?')
-    .run(nextPrice, margin, needsReview, itemId);
+  const nextReviewStatus =
+    item.review_status === 'rejected'
+      ? 'rejected'
+      : (needsReview ? 'review' : 'approved');
+  db.prepare('UPDATE inquiry_items SET harga_jual = ?, margin = ?, needs_price_review = ?, review_status = ? WHERE id = ?')
+    .run(nextPrice, margin, needsReview, nextReviewStatus, itemId);
 
   logActivity(id, 'Harga jual updated by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
@@ -1053,25 +1073,37 @@ inquiriesRouter.post('/:id/send-to-sent', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Inquiry must be in price_approved status.' }); return;
   }
 
-  const { doneBy, doneByName } = req.body as Record<string, unknown>;
+  const { doneBy, doneByName, incompleteReason } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
-  // Guard: block if any item is flagged as requiring manager price review
-  const items = db.prepare('SELECT item_name, needs_price_review, harga_jual, approved_price FROM inquiry_items WHERE inquiry_id = ?')
-    .all(id) as Array<{ item_name: string | null; needs_price_review: number; harga_jual: number | null; approved_price: number | null }>;
-  const belowFloor = items.filter((i) =>
+  const items = db.prepare('SELECT item_name, price_approved, review_status, needs_price_review, harga_jual, approved_price FROM inquiry_items WHERE inquiry_id = ?')
+    .all(id) as Array<{
+      item_name: string | null;
+      price_approved: number;
+      review_status: string | null;
+      needs_price_review: number;
+      harga_jual: number | null;
+      approved_price: number | null;
+    }>;
+  const unresolved = items.filter((i) =>
+    i.price_approved !== 1 ||
+    i.review_status === 'rejected' ||
     i.needs_price_review === 1 ||
     (i.harga_jual != null && i.approved_price != null && i.harga_jual < i.approved_price)
   );
-  if (belowFloor.length > 0) {
-    const names = belowFloor.map((i) => i.item_name ?? 'unknown').join(', ');
-    res.status(400).json({ error: `${belowFloor.length} item(s) have a price below the approved floor: ${names}. Send for Price Review first.` });
+  const isIncomplete = unresolved.length > 0;
+  if (isIncomplete && !String(incompleteReason ?? '').trim()) {
+    res.status(400).json({ error: 'incompleteReason is required when sending with unapproved/rejected items.' });
     return;
   }
 
-  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run('quotation_sent', new Date().toISOString(), String(doneBy), id);
-  logActivity(id, 'Quotation sent to customer', 'price_approved', 'quotation_sent', null, String(doneBy), String(doneByName ?? doneBy));
+  db.prepare('UPDATE inquiries SET status = ?, sent_incomplete = ?, sent_incomplete_reason = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .run('quotation_sent', isIncomplete ? 1 : 0, isIncomplete ? String(incompleteReason).trim() : null, new Date().toISOString(), String(doneBy), id);
+  const action = isIncomplete ? 'Quotation sent to customer (incomplete)' : 'Quotation sent to customer';
+  const note = isIncomplete
+    ? `Sent with ${unresolved.length} unresolved item(s). ${String(incompleteReason).trim()}`
+    : null;
+  logActivity(id, action, 'price_approved', 'quotation_sent', note, String(doneBy), String(doneByName ?? doneBy));
   res.json({ ok: true });
 });
 
@@ -1084,16 +1116,24 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     res.status(400).json({ error: 'Inquiry must be in price_approved status.' }); return;
   }
 
-  const { doneBy, doneByName } = req.body as Record<string, unknown>;
+  const { doneBy, doneByName, negotiationReason } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
   const items = db.prepare(
-    `SELECT id, needs_price_review, harga_jual, approved_price
+    `SELECT id, needs_price_review, review_status, review_round, harga_jual, approved_price
      FROM inquiry_items
      WHERE inquiry_id = ?`
-  ).all(id) as Array<{ id: string; needs_price_review: number; harga_jual: number | null; approved_price: number | null }>;
+  ).all(id) as Array<{
+    id: string;
+    needs_price_review: number;
+    review_status: string | null;
+    review_round: number | null;
+    harga_jual: number | null;
+    approved_price: number | null;
+  }>;
 
   const itemsNeedingReview = items.filter((item) =>
+    item.review_status === 'rejected' ||
     item.needs_price_review === 1 ||
     (item.harga_jual != null && item.approved_price != null && item.harga_jual < item.approved_price)
   );
@@ -1102,14 +1142,20 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     res.status(400).json({ error: 'No item needs price review.' }); return;
   }
 
+  const reopeningRejectedCount = itemsNeedingReview.filter((item) => item.review_status === 'rejected').length;
+  if (reopeningRejectedCount > 0 && !String(negotiationReason ?? '').trim()) {
+    res.status(400).json({ error: 'negotiationReason is required to reopen rejected item(s).' }); return;
+  }
+
   const reviewIds = new Set(itemsNeedingReview.map((item) => item.id));
-  const setNeedsReview = db.prepare('UPDATE inquiry_items SET price_approved = 0, needs_price_review = 1 WHERE id = ?');
-  const keepApproved = db.prepare('UPDATE inquiry_items SET price_approved = 1, needs_price_review = 0 WHERE id = ?');
+  const setNeedsReview = db.prepare('UPDATE inquiry_items SET price_approved = 0, needs_price_review = 1, review_status = ?, review_round = ? WHERE id = ?');
+  const keepApproved = db.prepare("UPDATE inquiry_items SET price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?");
 
   const applyReviewRouting = db.transaction(() => {
     for (const item of items) {
       if (reviewIds.has(item.id)) {
-        setNeedsReview.run(item.id);
+        const nextRound = Number(item.review_round ?? 0) + 1;
+        setNeedsReview.run('review', nextRound, item.id);
       } else {
         keepApproved.run(item.id);
       }
@@ -1124,7 +1170,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
     'price_approved',
     'price_approval',
-    null,
+    reopeningRejectedCount > 0 ? `Negotiation reopen: ${String(negotiationReason).trim()}` : null,
     String(doneBy),
     String(doneByName ?? doneBy)
   );
@@ -1171,7 +1217,7 @@ inquiriesRouter.post('/:id/approve', (req: Request, res: Response) => {
 
   db.prepare(
     `UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
-       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0 WHERE id = ?`
+       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`
   ).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
 
   logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -1199,11 +1245,52 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
 
   db.prepare(
     `UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
-       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0 WHERE id = ?`
+       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`
   ).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
 
   logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  res.json({ ok: true });
+});
+
+// POST /inquiries/:id/items/:itemId/reject — Manager rejects a price proposal
+inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) => {
+  const { id, itemId } = req.params;
+  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
+  if (inquiry.status !== 'price_approval') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  }
+
+  const item = db.prepare('SELECT id, review_round, item_name FROM inquiry_items WHERE id = ? AND inquiry_id = ?')
+    .get(itemId, id) as { id: string; review_round: number | null; item_name: string | null } | undefined;
+  if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
+
+  const { doneBy, doneByName, reason } = req.body as Record<string, unknown>;
+  const rejectReason = String(reason ?? '').trim();
+  if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
+  if (!rejectReason) { res.status(400).json({ error: 'reason is required.' }); return; }
+
+  const nextRound = Number(item.review_round ?? 0) + 1;
+  db.prepare(
+    `UPDATE inquiry_items
+     SET price_approved = 0,
+         needs_price_review = 1,
+         review_status = 'rejected',
+         review_round = ?
+     WHERE id = ?`
+  ).run(nextRound, itemId);
+
+  logActivity(
+    id,
+    `Price rejected (${item.item_name ?? 'Item'})`,
+    'price_approval',
+    'price_approval',
+    rejectReason,
+    String(doneBy),
+    String(doneByName ?? doneBy)
+  );
+
   res.json({ ok: true });
 });
 

@@ -64,6 +64,8 @@ db.exec(`
     deadline_quotation TEXT,
     lampiran TEXT,
     status TEXT NOT NULL DEFAULT 'new_inquiry',
+    sent_incomplete INTEGER NOT NULL DEFAULT 0,
+    sent_incomplete_reason TEXT,
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
     updated_at TEXT,
@@ -112,6 +114,8 @@ db.exec(`
     catatan_quotation TEXT,
     price_approved INTEGER NOT NULL DEFAULT 0,
     needs_price_review INTEGER NOT NULL DEFAULT 0,
+    review_status TEXT NOT NULL DEFAULT 'pending',
+    review_round INTEGER NOT NULL DEFAULT 0,
     approved_price REAL,
     alternate_name TEXT,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
@@ -201,7 +205,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 11;
+const LATEST_VERSION = 14;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -340,6 +344,36 @@ const migrations: Array<{ version: number; run: () => void }> = [
         db.exec('ALTER TABLE inquiry_items ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
     },
   },
+  {
+    // Add item review workflow columns to inquiry_items
+    version: 14,
+    run: () => {
+      const itemCols = cols('inquiry_items');
+      if (!itemCols.includes('review_status')) {
+        db.exec("ALTER TABLE inquiry_items ADD COLUMN review_status TEXT NOT NULL DEFAULT 'pending'");
+      }
+      if (!itemCols.includes('review_round')) {
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN review_round INTEGER NOT NULL DEFAULT 0');
+      }
+      db.exec(
+        `UPDATE inquiry_items
+         SET review_status = CASE
+           WHEN price_approved = 1 THEN 'approved'
+           WHEN needs_price_review = 1 THEN 'review'
+           ELSE 'pending'
+         END
+         WHERE review_status IS NULL OR review_status = '' OR review_status = 'pending'`
+      );
+
+      const inquiryCols = cols('inquiries');
+      if (!inquiryCols.includes('sent_incomplete')) {
+        db.exec('ALTER TABLE inquiries ADD COLUMN sent_incomplete INTEGER NOT NULL DEFAULT 0');
+      }
+      if (!inquiryCols.includes('sent_incomplete_reason')) {
+        db.exec('ALTER TABLE inquiries ADD COLUMN sent_incomplete_reason TEXT');
+      }
+    },
+  },
 ];
 
 const runMigrations = () => {
@@ -375,9 +409,27 @@ const ensureInquiryItemsColumns = () => {
   if (!c.includes('needs_price_review')) {
     db.exec('ALTER TABLE inquiry_items ADD COLUMN needs_price_review INTEGER NOT NULL DEFAULT 0');
   }
+  if (!c.includes('review_status')) {
+    db.exec("ALTER TABLE inquiry_items ADD COLUMN review_status TEXT NOT NULL DEFAULT 'pending'");
+  }
+  if (!c.includes('review_round')) {
+    db.exec('ALTER TABLE inquiry_items ADD COLUMN review_round INTEGER NOT NULL DEFAULT 0');
+  }
 };
 
 ensureInquiryItemsColumns();
+
+const ensureInquiriesColumns = () => {
+  const c = cols('inquiries');
+  if (!c.includes('sent_incomplete')) {
+    db.exec('ALTER TABLE inquiries ADD COLUMN sent_incomplete INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!c.includes('sent_incomplete_reason')) {
+    db.exec('ALTER TABLE inquiries ADD COLUMN sent_incomplete_reason TEXT');
+  }
+};
+
+ensureInquiriesColumns();
 
 // ─── Seed data ────────────────────────────────────────────────────────────────
 
