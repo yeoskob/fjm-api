@@ -1092,16 +1092,13 @@ inquiriesRouter.post('/:id/send-to-sent', (req: Request, res: Response) => {
     (i.harga_jual != null && i.approved_price != null && i.harga_jual < i.approved_price)
   );
   const isIncomplete = unresolved.length > 0;
-  if (isIncomplete && !String(incompleteReason ?? '').trim()) {
-    res.status(400).json({ error: 'incompleteReason is required when sending with unapproved/rejected items.' });
-    return;
-  }
-
   db.prepare('UPDATE inquiries SET status = ?, sent_incomplete = ?, sent_incomplete_reason = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run('quotation_sent', isIncomplete ? 1 : 0, isIncomplete ? String(incompleteReason).trim() : null, new Date().toISOString(), String(doneBy), id);
+    .run('quotation_sent', isIncomplete ? 1 : 0, (isIncomplete && String(incompleteReason ?? '').trim()) ? String(incompleteReason).trim() : null, new Date().toISOString(), String(doneBy), id);
   const action = isIncomplete ? 'Quotation sent to customer (incomplete)' : 'Quotation sent to customer';
   const note = isIncomplete
-    ? `Sent with ${unresolved.length} unresolved item(s). ${String(incompleteReason).trim()}`
+    ? (String(incompleteReason ?? '').trim()
+      ? `Sent with ${unresolved.length} unresolved item(s). ${String(incompleteReason).trim()}`
+      : `Sent with ${unresolved.length} unresolved item(s).`)
     : null;
   logActivity(id, action, 'price_approved', 'quotation_sent', note, String(doneBy), String(doneByName ?? doneBy));
   res.json({ ok: true });
