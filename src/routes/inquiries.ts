@@ -1224,6 +1224,7 @@ inquiriesRouter.post('/:id/approve', (req: Request, res: Response) => {
 
   const item = db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE inquiry_id = ? ORDER BY id LIMIT 1').get(id) as { id: string; harga_beli: number | null } | undefined;
   if (!item) { res.status(400).json({ error: 'No items found.' }); return; }
+  if (item.harga_beli == null) { res.status(400).json({ error: 'Harga beli is required before approving this item.' }); return; }
 
   const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
 
@@ -1247,6 +1248,7 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
 
   const item = db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; harga_beli: number | null } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
+  if (item.harga_beli == null) { res.status(400).json({ error: 'Harga beli is required before approving this item.' }); return; }
 
   const { hargaJual, leadTimeCustomer, validitasQuotation, catatanQuotation, doneBy, doneByName } =
     req.body as Record<string, unknown>;
