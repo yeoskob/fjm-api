@@ -1119,11 +1119,12 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   if (!reason) { res.status(400).json({ error: 'reviewReason is required.' }); return; }
 
   const items = db.prepare(
-    `SELECT id, needs_price_review, review_status, review_round, harga_jual, approved_price
+    `SELECT id, price_approved, needs_price_review, review_status, review_round, harga_jual, approved_price
      FROM inquiry_items
      WHERE inquiry_id = ?`
   ).all(id) as Array<{
     id: string;
+    price_approved: number;
     needs_price_review: number;
     review_status: string | null;
     review_round: number | null;
@@ -1132,6 +1133,8 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   }>;
 
   const itemsNeedingReview = items.filter((item) =>
+    item.price_approved !== 1 ||
+    item.harga_jual == null ||
     item.review_status === 'rejected' ||
     item.needs_price_review === 1 ||
     (item.harga_jual != null && item.approved_price != null && item.harga_jual < item.approved_price)
