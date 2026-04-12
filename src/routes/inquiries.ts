@@ -1116,8 +1116,10 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     res.status(400).json({ error: 'Inquiry must be in price_approved status.' }); return;
   }
 
-  const { doneBy, doneByName, negotiationReason } = req.body as Record<string, unknown>;
+  const { doneBy, doneByName, negotiationReason, reviewReason } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
+  const reason = String(reviewReason ?? negotiationReason ?? '').trim();
+  if (!reason) { res.status(400).json({ error: 'reviewReason is required.' }); return; }
 
   const items = db.prepare(
     `SELECT id, needs_price_review, review_status, review_round, harga_jual, approved_price
@@ -1147,12 +1149,25 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   const reviewIds = new Set(itemsNeedingReview.map((item) => item.id));
   const setNeedsReview = db.prepare('UPDATE inquiry_items SET price_approved = 0, needs_price_review = 1, review_status = ?, review_round = ? WHERE id = ?');
   const keepApproved = db.prepare("UPDATE inquiry_items SET price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?");
+  const insertItemNote = db.prepare(
+    'INSERT INTO inquiry_notes (id, inquiry_id, item_id, note, created_by, created_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
 
   const applyReviewRouting = db.transaction(() => {
+    const now = new Date().toISOString();
     for (const item of items) {
       if (reviewIds.has(item.id)) {
         const nextRound = Number(item.review_round ?? 0) + 1;
         setNeedsReview.run('review', nextRound, item.id);
+        insertItemNote.run(
+          generateId(),
+          id,
+          item.id,
+          `Price Review requested. Reason: ${reason}`,
+          String(doneBy),
+          String(doneByName ?? doneBy),
+          now
+        );
       } else {
         keepApproved.run(item.id);
       }
@@ -1167,7 +1182,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
     'price_approved',
     'price_approval',
-    (reopeningRejectedCount > 0 && String(negotiationReason ?? '').trim()) ? `Negotiation reopen: ${String(negotiationReason).trim()}` : null,
+    `Items: ${itemsNeedingReview.length}. Reason: ${reason}${reopeningRejectedCount > 0 ? ' (includes rejected item negotiation reopen)' : ''}`,
     String(doneBy),
     String(doneByName ?? doneBy)
   );
