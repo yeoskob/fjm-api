@@ -332,21 +332,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
     `SELECT status, COUNT(*) as count FROM inquiries GROUP BY status ORDER BY count DESC`
   ).all() as Array<{ status: string; count: number }>;
 
-  // Sourcing stats
-  const sourcingPending = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq'`).get() as { c: number }).c;
-  const sourcingItemsThisMonth = (db.prepare(
-    `SELECT COUNT(*) as c FROM activity_log WHERE action = 'Sourcing info submitted' AND created_at >= ?`
-  ).get(startOfMonthIso) as { c: number }).c;
-  const sourcingItemsTotal = (db.prepare(
-    `SELECT COUNT(*) as c FROM activity_log WHERE action = 'Sourcing info submitted'`
-  ).get() as { c: number }).c;
-  const topSourcers = db.prepare(
-    `SELECT done_by_name as sourcing_pic, COUNT(*) as items_count
-     FROM activity_log WHERE action = 'Sourcing info submitted'
-     GROUP BY done_by_name ORDER BY items_count DESC LIMIT 5`
-  ).all() as Array<{ sourcing_pic: string; items_count: number }>;
-
-  // Item state breakdown
+  // Item state breakdown — single source of truth from inquiry_items current state
   const itemsTerisi = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items WHERE supplier IS NOT NULL AND harga_beli IS NOT NULL AND lead_time IS NOT NULL AND sourcing_missed = 0`
   ).get() as { c: number }).c;
@@ -356,6 +342,20 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   const itemsTidakTerisi = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items WHERE (supplier IS NULL OR harga_beli IS NULL OR lead_time IS NULL)`
   ).get() as { c: number }).c;
+
+  // Sourcing stats — use inquiry_items for totals so stat cards match the pie chart
+  const sourcingPending = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq'`).get() as { c: number }).c;
+  // Total sourced = items with supplier data filled (terisi + missed)
+  const sourcingItemsTotal = itemsTerisi + itemsMissed;
+  // "This month" approximated from activity_log (deduplication not possible without item timestamps)
+  const sourcingItemsThisMonth = (db.prepare(
+    `SELECT COUNT(DISTINCT inquiry_id) as c FROM activity_log WHERE action = 'Sourcing info submitted' AND created_at >= ?`
+  ).get(startOfMonthIso) as { c: number }).c;
+  const topSourcers = db.prepare(
+    `SELECT done_by_name as sourcing_pic, COUNT(*) as items_count
+     FROM activity_log WHERE action = 'Sourcing info submitted'
+     GROUP BY done_by_name ORDER BY items_count DESC LIMIT 5`
+  ).all() as Array<{ sourcing_pic: string; items_count: number }>;
 
   res.json({
     total, thisMonth, quotationSent, deals, lost, conversionRate, topSales, statusBreakdown,
