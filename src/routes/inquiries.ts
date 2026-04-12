@@ -1262,9 +1262,19 @@ inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) 
     res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
   }
 
-  const item = db.prepare('SELECT id, review_round, item_name FROM inquiry_items WHERE id = ? AND inquiry_id = ?')
-    .get(itemId, id) as { id: string; review_round: number | null; item_name: string | null } | undefined;
+  const item = db.prepare(
+    'SELECT id, review_round, item_name, review_status, needs_price_review FROM inquiry_items WHERE id = ? AND inquiry_id = ?'
+  ).get(itemId, id) as {
+    id: string;
+    review_round: number | null;
+    item_name: string | null;
+    review_status: string | null;
+    needs_price_review: number;
+  } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
+  if (item.review_status !== 'review' && item.needs_price_review !== 1) {
+    res.status(400).json({ error: 'Only items in review status can be rejected.' }); return;
+  }
 
   const { doneBy, doneByName, reason } = req.body as Record<string, unknown>;
   const rejectReason = String(reason ?? '').trim();
