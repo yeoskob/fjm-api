@@ -72,6 +72,7 @@ function mapItem(row: Record<string, unknown>) {
     validitasQuotation: row['validitas_quotation'],
     catatanQuotation: row['catatan_quotation'],
     priceApproved: row['price_approved'] === 1,
+    sourcingMissed: row['sourcing_missed'] === 1,
   };
 }
 
@@ -947,7 +948,7 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
     res.status(400).json({ error: 'Inquiry must be in RFQ status.' }); return;
   }
 
-  const item = db.prepare('SELECT id, price_approved FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; price_approved: number } | undefined;
+  const item = db.prepare('SELECT id, price_approved, item_need_by_date FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; price_approved: number; item_need_by_date: string | null } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
   if (item.price_approved) { res.status(400).json({ error: 'Item already approved, cannot edit.' }); return; }
 
@@ -958,10 +959,20 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
     res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' }); return;
   }
 
+  // Mark as missed if submitted after the item's need-by date
+  let sourcingMissed = 0;
+  if (item.item_need_by_date) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const needBy = new Date(item.item_need_by_date);
+    needBy.setHours(0, 0, 0, 0);
+    if (today > needBy) sourcingMissed = 1;
+  }
+
   db.prepare(
     `UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
-       stock_availability = ?, term_pembayaran = ?, alternate_name = ? WHERE id = ?`
-  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, itemId);
+       stock_availability = ?, term_pembayaran = ?, alternate_name = ?, sourcing_missed = ? WHERE id = ?`
+  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, sourcingMissed, itemId);
 
   logActivity(id, 'Sourcing info submitted', 'rfq', 'rfq', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));

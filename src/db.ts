@@ -200,7 +200,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 10;
+const LATEST_VERSION = 11;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -321,6 +321,14 @@ const migrations: Array<{ version: number; run: () => void }> = [
       const cols = (db.prepare("PRAGMA table_info(roles)").all() as Array<{ name: string }>).map((r) => r.name);
       if (!cols.includes('tabs'))
         db.exec("ALTER TABLE roles ADD COLUMN tabs TEXT NOT NULL DEFAULT '{}'");
+    },
+  },
+  {
+    // Add sourcing_missed column to inquiry_items
+    version: 11,
+    run: () => {
+      if (!cols('inquiry_items').includes('sourcing_missed'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
     },
   },
 ];
