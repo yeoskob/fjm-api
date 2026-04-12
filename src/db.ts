@@ -111,6 +111,7 @@ db.exec(`
     validitas_quotation TEXT,
     catatan_quotation TEXT,
     price_approved INTEGER NOT NULL DEFAULT 0,
+    needs_price_review INTEGER NOT NULL DEFAULT 0,
     approved_price REAL,
     alternate_name TEXT,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
@@ -324,8 +325,16 @@ const migrations: Array<{ version: number; run: () => void }> = [
     },
   },
   {
+    // Add needs_price_review column to inquiry_items
+    version: 12,
+    run: () => {
+      if (!cols('inquiry_items').includes('needs_price_review'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN needs_price_review INTEGER NOT NULL DEFAULT 0');
+    },
+  },
+  {
     // Add sourcing_missed column to inquiry_items
-    version: 11,
+    version: 13,
     run: () => {
       if (!cols('inquiry_items').includes('sourcing_missed'))
         db.exec('ALTER TABLE inquiry_items ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
