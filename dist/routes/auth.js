@@ -18,6 +18,29 @@ exports.authRouter.post('/login', (req, res) => {
         res.status(401).json({ error: 'Invalid username or password.' });
         return;
     }
+    const roleRow = db_1.db.prepare('SELECT menus, tabs FROM roles WHERE name = ?').get(user.role);
+    let menus = [];
+    let tabs = {};
+    if (roleRow?.menus) {
+        try {
+            const parsed = JSON.parse(roleRow.menus);
+            if (Array.isArray(parsed))
+                menus = parsed.map((m) => String(m));
+        }
+        catch {
+            menus = [];
+        }
+    }
+    if (roleRow?.tabs) {
+        try {
+            const parsed = JSON.parse(roleRow.tabs);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+                tabs = parsed;
+        }
+        catch {
+            tabs = {};
+        }
+    }
     const token = db_1.db.transaction((userId) => {
         // Enforce single active session per user by clearing old sessions.
         db_1.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
@@ -25,7 +48,7 @@ exports.authRouter.post('/login', (req, res) => {
         db_1.db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(nextToken, userId);
         return nextToken;
     })(user.id);
-    res.json({ id: user.id, name: user.name, username: user.username, role: user.role, token });
+    res.json({ id: user.id, name: user.name, username: user.username, role: user.role, menus, tabs, token });
 });
 exports.authRouter.post('/logout', (req, res) => {
     const auth = req.headers['authorization'];

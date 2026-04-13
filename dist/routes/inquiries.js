@@ -67,10 +67,10 @@ function mapItem(row) {
         bidPriceCurrency: row['bid_price_currency'],
         bidLeadTime: row['bid_lead_time'],
         bidSupplierItemName: row['bid_supplier_item_name'],
+        alternateName: row['alternate_name'],
         bidItemPartNumber: row['bid_item_part_number'],
         bidItemDescription: row['bid_item_description'],
         bidShippingTerm: row['bid_shipping_term'],
-        targetPrice: row['target_price'],
         supplier: row['supplier'],
         hargaBeli: row['harga_beli'],
         leadTime: row['lead_time'],
@@ -78,10 +78,16 @@ function mapItem(row) {
         stockAvailability: row['stock_availability'],
         termPembayaran: row['term_pembayaran'],
         hargaJual: row['harga_jual'],
+        approvedPrice: row['approved_price'],
         margin: row['margin'],
         leadTimeCustomer: row['lead_time_customer'],
         validitasQuotation: row['validitas_quotation'],
         catatanQuotation: row['catatan_quotation'],
+        priceApproved: row['price_approved'] === 1,
+        needsPriceReview: row['needs_price_review'] === 1,
+        reviewStatus: row['review_status'] ?? 'pending',
+        reviewRound: Number(row['review_round'] ?? 0),
+        sourcingMissed: row['sourcing_missed'] === 1,
     };
 }
 function mapInquiry(row, items) {
@@ -99,6 +105,9 @@ function mapInquiry(row, items) {
         createdBy: row['created_by'],
         updatedAt: row['updated_at'],
         updatedBy: row['updated_by'],
+        sentIncomplete: row['sent_incomplete'] === 1,
+        sentIncompleteReason: row['sent_incomplete_reason'] ?? null,
+        needByDate: row['deadline_quotation'] ?? null,
         items: items.map(mapItem),
     };
 }
@@ -209,21 +218,14 @@ function allItemsSourced(items) {
 function allItemsApproved(items) {
     if (items.length === 0)
         return false;
-    return items.every((item) => item['harga_jual'] != null);
+    return items.every((item) => item['price_approved'] === 1);
 }
 function recalcInquiryStatus(inquiryId, doneBy, doneByName) {
-    const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(inquiryId);
-    if (!inquiry)
-        return;
-    if (['deal', 'lost', 'follow_up'].includes(inquiry.status))
-        return;
-    const items = db_1.db.prepare('SELECT harga_jual FROM inquiry_items WHERE inquiry_id = ?').all(inquiryId);
-    const canMoveToQuotation = inquiry.status === 'price_approval' && allItemsApproved(items);
-    if (canMoveToQuotation) {
-        db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-            .run('quotation_sent', new Date().toISOString(), doneBy, inquiryId);
-        logActivity(inquiryId, 'Auto status update', inquiry.status, 'quotation_sent', null, doneBy, doneByName);
-    }
+    // Manual transition is now required for price_approval -> price_approved.
+    // Keep this function as a no-op because older call sites still invoke it.
+    void inquiryId;
+    void doneBy;
+    void doneByName;
 }
 // GET /inquiries
 exports.inquiriesRouter.get('/', (_req, res) => {
@@ -274,6 +276,10 @@ exports.inquiriesRouter.get('/dashboard/user', (req, res) => {
     // Sales stats
     const total = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ?').get(name).c;
     const thisMonthSales = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND created_at >= ?').get(name, startOfMonthIso).c;
+    const quotationSent = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status IN ('quotation_sent','deal')`).get(name).c;
+    const sentIncomplete = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries
+     WHERE sales_pic = ? AND status IN ('quotation_sent','deal') AND sent_incomplete = 1`).get(name).c;
+    const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
     const deals = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'deal'`).get(name).c;
     const lost = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'lost'`).get(name).c;
     const active = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status NOT IN ('deal','lost')`).get(name).c;
@@ -283,13 +289,26 @@ exports.inquiriesRouter.get('/dashboard/user', (req, res) => {
     const itemsSourced = db_1.db.prepare(`SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Sourcing info submitted'`).get(name).c;
     const inquiriesContributed = db_1.db.prepare(`SELECT COUNT(DISTINCT inquiry_id) as c FROM activity_log WHERE done_by_name = ? AND action = 'Sourcing info submitted'`).get(name).c;
     const thisMonthSourcing = db_1.db.prepare(`SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Sourcing info submitted' AND created_at >= ?`).get(name, startOfMonthIso).c;
+    // Per-user item state breakdown — scoped to RFQs assigned to this sourcing user
+    const userItemsTerisi = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_pic = ?
+       AND ii.supplier IS NOT NULL AND ii.harga_beli IS NOT NULL AND ii.lead_time IS NOT NULL
+       AND ii.sourcing_missed = 0`).get(name).c;
+    const userItemsMissed = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_pic = ? AND ii.sourcing_missed = 1`).get(name).c;
+    const userItemsTidakTerisi = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_pic = ?
+       AND (ii.supplier IS NULL OR ii.harga_beli IS NULL OR ii.lead_time IS NULL)`).get(name).c;
     // Manager stats
     const approvalsTotal = db_1.db.prepare(`SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved'`).get(name).c;
     const approvalsThisMonth = db_1.db.prepare(`SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved' AND created_at >= ?`).get(name, startOfMonthIso).c;
     const inquiriesApproved = db_1.db.prepare(`SELECT COUNT(DISTINCT inquiry_id) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved'`).get(name).c;
     res.json({
-        salesStats: { total, thisMonth: thisMonthSales, deals, lost, active, conversionRate, statusBreakdown },
-        sourcingStats: { itemsSourced, inquiriesContributed, thisMonth: thisMonthSourcing },
+        salesStats: { total, thisMonth: thisMonthSales, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, active, conversionRate, statusBreakdown },
+        sourcingStats: { itemsSourced, inquiriesContributed, thisMonth: thisMonthSourcing, itemsTerisi: userItemsTerisi, itemsMissed: userItemsMissed, itemsTidakTerisi: userItemsTidakTerisi },
         managerStats: { approvalsTotal, approvalsThisMonth, inquiriesApproved },
     });
 });
@@ -298,15 +317,36 @@ exports.inquiriesRouter.get('/dashboard', (_req, res) => {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
+    const startOfMonthIso = startOfMonth.toISOString();
+    // Sales stats
     const total = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiries').get().c;
-    const thisMonth = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonth.toISOString()).c;
-    const quotationSent = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','follow_up','deal')`).get().c;
+    const thisMonth = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonthIso).c;
+    const quotationSent = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal')`).get().c;
+    const sentIncomplete = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal') AND sent_incomplete = 1`).get().c;
+    const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
     const deals = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'deal'`).get().c;
     const lost = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'lost'`).get().c;
     const conversionRate = total > 0 ? +((deals / total) * 100).toFixed(1) : 0;
     const topSales = db_1.db.prepare(`SELECT sales_pic, COUNT(*) as deal_count FROM inquiries WHERE status = 'deal' GROUP BY sales_pic ORDER BY deal_count DESC LIMIT 5`).all();
     const statusBreakdown = db_1.db.prepare(`SELECT status, COUNT(*) as count FROM inquiries GROUP BY status ORDER BY count DESC`).all();
-    res.json({ total, thisMonth, quotationSent, deals, lost, conversionRate, topSales, statusBreakdown });
+    // Item state breakdown — single source of truth from inquiry_items current state
+    const itemsTerisi = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiry_items WHERE supplier IS NOT NULL AND harga_beli IS NOT NULL AND lead_time IS NOT NULL AND sourcing_missed = 0`).get().c;
+    const itemsMissed = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiry_items WHERE sourcing_missed = 1`).get().c;
+    const itemsTidakTerisi = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiry_items WHERE (supplier IS NULL OR harga_beli IS NULL OR lead_time IS NULL)`).get().c;
+    // Sourcing stats — use inquiry_items for totals so stat cards match the pie chart
+    const sourcingPending = db_1.db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq'`).get().c;
+    // Total sourced = items with supplier data filled (terisi + missed)
+    const sourcingItemsTotal = itemsTerisi + itemsMissed;
+    // "This month" approximated from activity_log (deduplication not possible without item timestamps)
+    const sourcingItemsThisMonth = db_1.db.prepare(`SELECT COUNT(DISTINCT inquiry_id) as c FROM activity_log WHERE action = 'Sourcing info submitted' AND created_at >= ?`).get(startOfMonthIso).c;
+    const topSourcers = db_1.db.prepare(`SELECT done_by_name as sourcing_pic, COUNT(*) as items_count
+     FROM activity_log WHERE action = 'Sourcing info submitted'
+     GROUP BY done_by_name ORDER BY items_count DESC LIMIT 5`).all();
+    res.json({
+        total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, conversionRate, topSales, statusBreakdown,
+        sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers,
+        itemsTerisi, itemsTidakTerisi, itemsMissed,
+    });
 });
 // POST /inquiries/import-coupa
 exports.inquiriesRouter.post('/import-coupa', (req, res) => {
@@ -401,10 +441,11 @@ exports.inquiriesRouter.post('/import-coupa', (req, res) => {
         coupa_item_id, item_name, item_quantity, item_uom, item_need_by_date, item_manufacturer_name,
         item_manufacturer_part_number, item_classification_of_goods, item_extended_description, item_fiscal_code,
         coupa_bid_id, bid_capacity, bid_price_amount, bid_price_currency, bid_lead_time,
-        bid_supplier_item_name, bid_item_part_number, bid_item_description, bid_shipping_term
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        bid_supplier_item_name, bid_item_part_number, bid_item_description, bid_shipping_term,
+        harga_jual, alternate_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
         for (const item of items) {
-            insertItem.run((0, id_1.generateId)(), id, item.coupa_row_index ?? null, item.lot_id ?? null, item.lot_name ?? null, item.lot_expected_quantity ?? null, item.lot_quantity_note ?? null, item.coupa_item_id ?? null, item.item_name ?? null, item.item_quantity ?? null, item.item_uom ?? null, item.item_need_by_date ?? null, item.item_manufacturer_name ?? null, item.item_manufacturer_part_number ?? null, item.item_classification_of_goods ?? null, item.item_extended_description ?? null, item.item_fiscal_code ?? null, item.coupa_bid_id ?? null, item.bid_capacity ?? null, item.bid_price_amount ?? null, item.bid_price_currency ?? null, item.bid_lead_time ?? null, item.bid_supplier_item_name ?? null, item.bid_item_part_number ?? null, item.bid_item_description ?? null, item.bid_shipping_term ?? null);
+            insertItem.run((0, id_1.generateId)(), id, item.coupa_row_index ?? null, item.lot_id ?? null, item.lot_name ?? null, item.lot_expected_quantity ?? null, item.lot_quantity_note ?? null, item.coupa_item_id ?? null, item.item_name ?? null, item.item_quantity ?? null, item.item_uom ?? null, item.item_need_by_date ?? null, item.item_manufacturer_name ?? null, item.item_manufacturer_part_number ?? null, item.item_classification_of_goods ?? null, item.item_extended_description ?? null, item.item_fiscal_code ?? null, item.coupa_bid_id ?? null, item.bid_capacity ?? null, item.bid_price_amount ?? null, item.bid_price_currency ?? null, item.bid_lead_time ?? null, item.bid_supplier_item_name ?? null, item.bid_item_part_number ?? null, item.bid_item_description ?? null, item.bid_shipping_term ?? null, item.bid_price_amount ?? null, item.bid_supplier_item_name ?? null);
         }
         db_1.db.prepare(`INSERT INTO coupa_files (inquiry_id, file_name, file_data, created_at) VALUES (?, ?, ?, ?)`).run(id, String(fileName), Buffer.from(String(fileBase64), 'base64'), createdAt);
     });
@@ -508,11 +549,16 @@ function buildCoupaFormatExcel(items) {
         const bidId = item['coupa_bid_id'];
         const itemName = item['item_name'];
         const itemQty = item['item_quantity'];
-        const hargaJual = item['harga_jual'];
-        const leadTime = normalizeLeadTime((item['lead_time_customer'] ?? item['lead_time']));
+        const approvedPrice = (item['approved_price'] ?? item['harga_jual'] ?? item['bid_price_amount']);
+        const bidCapacity = (item['bid_capacity'] ?? itemQty);
+        const bidCurrency = (item['bid_price_currency'] ?? 'IDR');
+        const leadTime = normalizeLeadTime((item['lead_time_customer'] ?? item['lead_time'] ?? item['bid_lead_time']));
         const catatan = item['catatan_quotation'];
-        const description = catatan || item['item_extended_description'] || itemName;
+        const description = catatan || item['item_extended_description'] || null;
         const shipping = item['term_pembayaran'] || item['bid_shipping_term'];
+        const supplierItemName = (item['bid_supplier_item_name'] ?? item['alternate_name'] ?? null);
+        const bidItemPartNumber = item['bid_item_part_number'];
+        const bidItemDescription = (item['bid_item_description'] ?? description);
         // Lot columns
         setCell(r, 3, itemQty); // lot.expected_quantity
         // Item columns
@@ -528,12 +574,13 @@ function buildCoupaFormatExcel(items) {
         setCell(r, 14, item['item_fiscal_code']);
         // Bid / supplier response columns
         setCell(r, 15, bidId != null ? String(bidId) : null);
-        setCell(r, 16, itemQty); // bid.capacity
-        setCell(r, 17, hargaJual); // bid.price_amount
-        setCell(r, 18, 'IDR'); // bid.price_currency
+        setCell(r, 16, bidCapacity); // bid.capacity
+        setCell(r, 17, approvedPrice); // bid.price_amount
+        setCell(r, 18, bidCurrency); // bid.price_currency
         setCell(r, 19, leadTime); // bid.lead_time
-        setCell(r, 20, itemName); // bid.supplier_item_name
-        setCell(r, 22, description); // bid.item_description
+        setCell(r, 20, supplierItemName); // bid.supplier_item_name
+        setCell(r, 21, bidItemPartNumber); // bid.item_part_number
+        setCell(r, 22, bidItemDescription); // bid.item_description
         setCell(r, 23, shipping); // bid.shipping_term
     });
     const lastRow = 5 + Math.max(items.length - 1, 0);
@@ -570,19 +617,26 @@ exports.inquiriesRouter.get('/:id/export-coupa', (req, res) => {
             if (rowIndex == null)
                 continue;
             const row = Number(rowIndex) - 1;
-            const hargaJual = item['harga_jual'];
+            const approvedPrice = (item['approved_price'] ?? item['harga_jual'] ?? item['bid_price_amount']);
             const leadTimeCustomer = item['lead_time_customer'];
             const leadTimeFallback = item['lead_time'];
-            const leadTime = normalizeLeadTime(leadTimeCustomer ?? leadTimeFallback);
+            const leadTime = normalizeLeadTime(leadTimeCustomer ?? leadTimeFallback ?? item['bid_lead_time']);
             const catatan = item['catatan_quotation'] ?? null;
-            const description = catatan || item['item_extended_description'] || item['item_name'];
+            const description = catatan || item['item_extended_description'] || null;
             const itemName = item['item_name'];
             const itemQty = item['item_quantity'];
-            setSheetCell(sheet, row, fieldMap['bid.capacity'], itemQty ?? null);
-            setSheetCell(sheet, row, fieldMap['bid.price_amount'], hargaJual ?? null);
+            const bidCapacity = (item['bid_capacity'] ?? itemQty);
+            const bidCurrency = (item['bid_price_currency'] ?? null);
+            const supplierItemName = (item['bid_supplier_item_name'] ?? item['alternate_name'] ?? null);
+            const bidItemPartNumber = item['bid_item_part_number'];
+            const bidItemDescription = (item['bid_item_description'] ?? description);
+            setSheetCell(sheet, row, fieldMap['bid.capacity'], bidCapacity ?? null);
+            setSheetCell(sheet, row, fieldMap['bid.price_amount'], approvedPrice ?? null);
+            setSheetCell(sheet, row, fieldMap['bid.price_currency'], bidCurrency ?? null);
             setSheetCell(sheet, row, fieldMap['bid.lead_time'], leadTime ?? null);
-            setSheetCell(sheet, row, fieldMap['bid.supplier_item_name'], itemName ?? null);
-            setSheetCell(sheet, row, fieldMap['bid.item_description'], description ?? null);
+            setSheetCell(sheet, row, fieldMap['bid.supplier_item_name'], supplierItemName ?? null);
+            setSheetCell(sheet, row, fieldMap['bid.item_part_number'], bidItemPartNumber ?? null);
+            setSheetCell(sheet, row, fieldMap['bid.item_description'], bidItemDescription ?? null);
             const shipping = item['term_pembayaran'] || item['bid_shipping_term'];
             if (shipping)
                 setSheetCell(sheet, row, fieldMap['bid.shipping_term'], shipping);
@@ -603,7 +657,7 @@ exports.inquiriesRouter.get('/:id/export-coupa', (req, res) => {
 });
 // POST /inquiries
 exports.inquiriesRouter.post('/', (req, res) => {
-    const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, targetPrice, deadlineQuotation, lampiran, createdBy, createdByName } = req.body;
+    const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, createdBy, createdByName } = req.body;
     if (!customer || !salesPic || !namaBarang || !createdBy) {
         res.status(400).json({ error: 'customer, salesPic, namaBarang, createdBy are required.' });
         return;
@@ -613,13 +667,13 @@ exports.inquiriesRouter.post('/', (req, res) => {
     const tanggal = new Date().toISOString().split('T')[0];
     const createdAt = new Date().toISOString();
     const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
-    db_1.db.prepare(`INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, target_price, deadline_quotation, lampiran, status, created_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_inquiry', ?, ?)`).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, spesifikasi ?? null, qty ?? null, targetPrice ?? null, needByDate, lampiran ?? null, createdAt, createdBy);
+    db_1.db.prepare(`INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, deadline_quotation, lampiran, status, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_inquiry', ?, ?)`).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, createdAt, createdBy);
     db_1.db.prepare(`INSERT INTO inquiry_items (
       id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
       item_manufacturer_name, item_manufacturer_part_number, item_classification_of_goods,
-      item_extended_description, target_price
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run((0, id_1.generateId)(), id, namaBarang, qty ?? null, itemUom ?? null, needByDate, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, spesifikasi ?? null, targetPrice ?? null);
+      item_extended_description, item_image
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run((0, id_1.generateId)(), id, namaBarang, qty ?? null, itemUom ?? null, needByDate, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, spesifikasi ?? null, itemImage ?? null);
     logActivity(id, 'Inquiry created', null, 'new_inquiry', null, String(createdBy), String(createdByName ?? createdBy));
     res.status(201).json({ id, rfqNo, tanggal, status: 'new_inquiry', createdAt });
 });
@@ -635,14 +689,14 @@ exports.inquiriesRouter.put('/:id', (req, res) => {
         res.status(400).json({ error: 'Cannot edit inquiry at this stage.' });
         return;
     }
-    const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, targetPrice, deadlineQuotation, lampiran, updatedBy, updatedByName } = req.body;
+    const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, updatedBy, updatedByName } = req.body;
     const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
     db_1.db.prepare(`UPDATE inquiries SET
        customer = COALESCE(?, customer), sales_pic = COALESCE(?, sales_pic),
        nama_barang = COALESCE(?, nama_barang), spesifikasi = ?, qty = ?,
-       target_price = ?, deadline_quotation = ?, lampiran = ?,
+       deadline_quotation = ?, lampiran = ?,
        updated_at = ?, updated_by = ?
-     WHERE id = ?`).run(customer ?? null, salesPic ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, targetPrice ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
+     WHERE id = ?`).run(customer ?? null, salesPic ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
     const itemCount = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id).c;
     if (itemCount === 1) {
         db_1.db.prepare(`UPDATE inquiry_items SET
@@ -653,9 +707,8 @@ exports.inquiriesRouter.put('/:id', (req, res) => {
          item_need_by_date = ?,
          item_manufacturer_name = ?,
          item_manufacturer_part_number = ?,
-         item_classification_of_goods = ?,
-         target_price = ?
-       WHERE inquiry_id = ?`).run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, targetPrice ?? null, id);
+         item_classification_of_goods = ?
+       WHERE inquiry_id = ?`).run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, id);
     }
     logActivity(id, 'Inquiry updated', inquiry.status, inquiry.status, null, String(updatedBy ?? ''), String(updatedByName ?? updatedBy ?? ''));
     res.json({ ok: true });
@@ -690,7 +743,7 @@ exports.inquiriesRouter.post('/:id/items', (req, res) => {
         res.status(400).json({ error: 'Inquiry must be in new_inquiry status.' });
         return;
     }
-    const { itemName, itemQuantity, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemExtendedDescription, targetPrice, itemImage, doneBy, doneByName } = req.body;
+    const { itemName, itemQuantity, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemExtendedDescription, itemImage, doneBy, doneByName } = req.body;
     if (!itemName) {
         res.status(400).json({ error: 'itemName is required.' });
         return;
@@ -698,12 +751,12 @@ exports.inquiriesRouter.post('/:id/items', (req, res) => {
     const newId = (0, id_1.generateId)();
     db_1.db.prepare(`INSERT INTO inquiry_items (id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
       item_manufacturer_name, item_manufacturer_part_number, item_classification_of_goods,
-      item_extended_description, target_price, item_image)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, id, itemName, itemQuantity ?? null, itemUom ?? null, itemNeedByDate ?? null, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, itemExtendedDescription ?? null, targetPrice ?? null, itemImage ?? null);
+      item_extended_description, item_image)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(newId, id, itemName, itemQuantity ?? null, itemUom ?? null, itemNeedByDate ?? null, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, itemExtendedDescription ?? null, itemImage ?? null);
     logActivity(id, 'Item added by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true, id: newId });
 });
-// PATCH /inquiries/:id/items/:itemId — Marketing updates target price / image
+// PATCH /inquiries/:id/items/:itemId — Marketing updates target price / image / need-by-date (new_inquiry only)
 exports.inquiriesRouter.patch('/:id/items/:itemId', (req, res) => {
     const { id, itemId } = req.params;
     const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
@@ -720,13 +773,27 @@ exports.inquiriesRouter.patch('/:id/items/:itemId', (req, res) => {
         res.status(404).json({ error: 'Item not found.' });
         return;
     }
-    const { targetPrice, itemImage, doneBy, doneByName } = req.body;
-    db_1.db.prepare('UPDATE inquiry_items SET target_price = ?, item_image = ? WHERE id = ?')
-        .run(targetPrice ?? null, itemImage ?? null, itemId);
+    const { itemImage, doneBy, doneByName } = req.body;
+    db_1.db.prepare('UPDATE inquiry_items SET item_image = ? WHERE id = ?')
+        .run(itemImage ?? null, itemId);
     logActivity(id, 'Item reviewed by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
 });
-// PATCH /inquiries/:id/items/:itemId/harga-jual — Sales updates selling price on quotation_sent
+// PATCH /inquiries/:id/need-by-date — Sales updates RFQ-level need-by date from any status
+exports.inquiriesRouter.patch('/:id/need-by-date', (req, res) => {
+    const { id } = req.params;
+    const inquiry = db_1.db.prepare('SELECT id FROM inquiries WHERE id = ?').get(id);
+    if (!inquiry) {
+        res.status(404).json({ error: 'Not found.' });
+        return;
+    }
+    const { needByDate, doneBy, doneByName } = req.body;
+    db_1.db.prepare('UPDATE inquiries SET deadline_quotation = ? WHERE id = ?')
+        .run(needByDate ?? null, id);
+    logActivity(id, 'Need-by date updated', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+    res.json({ ok: true });
+});
+// PATCH /inquiries/:id/items/:itemId/harga-jual — Sales/Marketing updates selling price
 exports.inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req, res) => {
     const { id, itemId } = req.params;
     const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
@@ -734,11 +801,11 @@ exports.inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (!['quotation_sent', 'follow_up'].includes(inquiry.status)) {
-        res.status(400).json({ error: 'Inquiry must be in quotation_sent or follow_up status.' });
+    if (!['price_approved', 'quotation_sent', 'deal'].includes(inquiry.status)) {
+        res.status(400).json({ error: 'Inquiry must be in price_approved, quotation_sent, or deal status.' });
         return;
     }
-    const item = db_1.db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
+    const item = db_1.db.prepare('SELECT id, harga_beli, approved_price, review_status FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
     if (!item) {
         res.status(404).json({ error: 'Item not found.' });
         return;
@@ -748,10 +815,15 @@ exports.inquiriesRouter.patch('/:id/items/:itemId/harga-jual', (req, res) => {
         res.status(400).json({ error: 'hargaJual is required.' });
         return;
     }
-    const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
-    db_1.db.prepare('UPDATE inquiry_items SET harga_jual = ?, margin = ? WHERE id = ?')
-        .run(hargaJual, margin, itemId);
-    logActivity(id, 'Harga jual updated by sales', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+    const nextPrice = Number(hargaJual);
+    const margin = item.harga_beli != null ? nextPrice - item.harga_beli : null;
+    const needsReview = item.approved_price != null ? (nextPrice < item.approved_price ? 1 : 0) : 0;
+    const nextReviewStatus = item.review_status === 'rejected'
+        ? 'rejected'
+        : (needsReview ? 'review' : 'approved');
+    db_1.db.prepare('UPDATE inquiry_items SET harga_jual = ?, margin = ?, needs_price_review = ?, review_status = ? WHERE id = ?')
+        .run(nextPrice, margin, needsReview, nextReviewStatus, itemId);
+    logActivity(id, 'Harga jual updated by marketing', null, null, null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
 });
 // POST /inquiries/:id/sourcing-info — Sourcing fills supplier data
@@ -762,7 +834,7 @@ exports.inquiriesRouter.post('/:id/sourcing-info', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'rfq') {
+    if (!['rfq', 'price_approval'].includes(inquiry.status)) {
         res.status(400).json({ error: 'Inquiry must be in RFQ status.' });
         return;
     }
@@ -771,9 +843,13 @@ exports.inquiriesRouter.post('/:id/sourcing-info', (req, res) => {
         res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' });
         return;
     }
-    const item = db_1.db.prepare('SELECT id FROM inquiry_items WHERE inquiry_id = ? ORDER BY id LIMIT 1').get(id);
+    const item = db_1.db.prepare('SELECT id, price_approved FROM inquiry_items WHERE inquiry_id = ? ORDER BY id LIMIT 1').get(id);
     if (!item) {
         res.status(400).json({ error: 'No items found.' });
+        return;
+    }
+    if (item.price_approved) {
+        res.status(400).json({ error: 'Item already approved, cannot edit.' });
         return;
     }
     db_1.db.prepare(`UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
@@ -789,22 +865,36 @@ exports.inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'rfq') {
+    if (!['rfq', 'price_approval'].includes(inquiry.status)) {
         res.status(400).json({ error: 'Inquiry must be in RFQ status.' });
         return;
     }
-    const item = db_1.db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
+    const item = db_1.db.prepare('SELECT id, price_approved, item_need_by_date FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
     if (!item) {
         res.status(404).json({ error: 'Item not found.' });
         return;
     }
-    const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, doneBy, doneByName } = req.body;
+    if (item.price_approved) {
+        res.status(400).json({ error: 'Item already approved, cannot edit.' });
+        return;
+    }
+    const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, alternateName, doneBy, doneByName } = req.body;
     if (!supplier || hargaBeli === undefined || !leadTime) {
         res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' });
         return;
     }
+    // Mark as missed if submitted after the item's need-by date
+    let sourcingMissed = 0;
+    if (item.item_need_by_date) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const needBy = new Date(item.item_need_by_date);
+        needBy.setHours(0, 0, 0, 0);
+        if (today > needBy)
+            sourcingMissed = 1;
+    }
     db_1.db.prepare(`UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
-       stock_availability = ?, term_pembayaran = ? WHERE id = ?`).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, itemId);
+       stock_availability = ?, term_pembayaran = ?, alternate_name = ?, sourcing_missed = ? WHERE id = ?`).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, sourcingMissed, itemId);
     logActivity(id, 'Sourcing info submitted', 'rfq', 'rfq', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
@@ -821,11 +911,6 @@ exports.inquiriesRouter.post('/:id/send-to-price-approval', (req, res) => {
         res.status(400).json({ error: 'Inquiry must be in rfq status.' });
         return;
     }
-    const items = db_1.db.prepare('SELECT supplier, harga_beli, lead_time FROM inquiry_items WHERE inquiry_id = ?').all(id);
-    if (!allItemsSourced(items)) {
-        res.status(400).json({ error: 'All items must be sourced before sending to price approval.' });
-        return;
-    }
     const { doneBy, doneByName, note } = req.body;
     if (!doneBy) {
         res.status(400).json({ error: 'doneBy is required.' });
@@ -834,6 +919,149 @@ exports.inquiriesRouter.post('/:id/send-to-price-approval', (req, res) => {
     db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
         .run('price_approval', new Date().toISOString(), String(doneBy), id);
     logActivity(id, 'Sent to Price Approval', 'rfq', 'price_approval', note ? String(note) : null, String(doneBy), String(doneByName ?? doneBy));
+    res.json({ ok: true });
+});
+// POST /inquiries/:id/return-to-sourcing — Pricelist sends unfilled items back to sourcing
+exports.inquiriesRouter.post('/:id/return-to-sourcing', (req, res) => {
+    const { id } = req.params;
+    const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
+    if (!inquiry) {
+        res.status(404).json({ error: 'Not found.' });
+        return;
+    }
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
+        return;
+    }
+    const items = db_1.db.prepare('SELECT price_approved, harga_beli FROM inquiry_items WHERE inquiry_id = ?').all(id);
+    const hasUnsourced = items.some((i) => !i.price_approved && !i.harga_beli);
+    if (!hasUnsourced) {
+        res.status(400).json({ error: 'No unfilled items to return to sourcing.' });
+        return;
+    }
+    const { doneBy, doneByName } = req.body;
+    if (!doneBy) {
+        res.status(400).json({ error: 'doneBy is required.' });
+        return;
+    }
+    db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+        .run('rfq', new Date().toISOString(), String(doneBy), id);
+    logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
+    res.json({ ok: true });
+});
+// POST /inquiries/:id/send-to-sent — Marketing sends quotation to customer (price_approved → quotation_sent)
+exports.inquiriesRouter.post('/:id/send-to-sent', (req, res) => {
+    const { id } = req.params;
+    const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
+    if (!inquiry) {
+        res.status(404).json({ error: 'Not found.' });
+        return;
+    }
+    if (inquiry.status !== 'price_approved') {
+        res.status(400).json({ error: 'Inquiry must be in price_approved status.' });
+        return;
+    }
+    const { doneBy, doneByName, incompleteReason } = req.body;
+    if (!doneBy) {
+        res.status(400).json({ error: 'doneBy is required.' });
+        return;
+    }
+    const items = db_1.db.prepare('SELECT item_name, price_approved, review_status, needs_price_review, harga_jual, approved_price FROM inquiry_items WHERE inquiry_id = ?')
+        .all(id);
+    const unresolved = items.filter((i) => i.price_approved !== 1 ||
+        i.review_status === 'rejected' ||
+        i.needs_price_review === 1 ||
+        (i.harga_jual != null && i.approved_price != null && i.harga_jual < i.approved_price));
+    const isIncomplete = unresolved.length > 0;
+    db_1.db.prepare('UPDATE inquiries SET status = ?, sent_incomplete = ?, sent_incomplete_reason = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+        .run('quotation_sent', isIncomplete ? 1 : 0, (isIncomplete && String(incompleteReason ?? '').trim()) ? String(incompleteReason).trim() : null, new Date().toISOString(), String(doneBy), id);
+    const action = isIncomplete ? 'Quotation sent to customer (incomplete)' : 'Quotation sent to customer';
+    const note = isIncomplete
+        ? (String(incompleteReason ?? '').trim()
+            ? `Sent with ${unresolved.length} unresolved item(s). ${String(incompleteReason).trim()}`
+            : `Sent with ${unresolved.length} unresolved item(s).`)
+        : null;
+    logActivity(id, action, 'price_approved', 'quotation_sent', note, String(doneBy), String(doneByName ?? doneBy));
+    res.json({ ok: true });
+});
+// POST /inquiries/:id/return-to-price-approval — Marketing sends back for price review (price_approved → price_approval)
+exports.inquiriesRouter.post('/:id/return-to-price-approval', (req, res) => {
+    const { id } = req.params;
+    const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
+    if (!inquiry) {
+        res.status(404).json({ error: 'Not found.' });
+        return;
+    }
+    if (inquiry.status !== 'price_approved') {
+        res.status(400).json({ error: 'Inquiry must be in price_approved status.' });
+        return;
+    }
+    const { doneBy, doneByName, negotiationReason, reviewReason } = req.body;
+    if (!doneBy) {
+        res.status(400).json({ error: 'doneBy is required.' });
+        return;
+    }
+    const reason = String(reviewReason ?? negotiationReason ?? '').trim();
+    if (!reason) {
+        res.status(400).json({ error: 'reviewReason is required.' });
+        return;
+    }
+    const items = db_1.db.prepare(`SELECT id, price_approved, needs_price_review, review_status, review_round, harga_jual, approved_price
+     FROM inquiry_items
+     WHERE inquiry_id = ?`).all(id);
+    const itemsNeedingReview = items.filter((item) => item.price_approved !== 1 ||
+        item.harga_jual == null ||
+        item.review_status === 'rejected' ||
+        item.needs_price_review === 1 ||
+        (item.harga_jual != null && item.approved_price != null && item.harga_jual < item.approved_price));
+    if (!itemsNeedingReview.length) {
+        res.status(400).json({ error: 'No item needs price review.' });
+        return;
+    }
+    const reopeningRejectedCount = itemsNeedingReview.filter((item) => item.review_status === 'rejected').length;
+    const reviewIds = new Set(itemsNeedingReview.map((item) => item.id));
+    const setNeedsReview = db_1.db.prepare('UPDATE inquiry_items SET price_approved = 0, needs_price_review = 1, review_status = ?, review_round = ? WHERE id = ?');
+    const keepApproved = db_1.db.prepare("UPDATE inquiry_items SET price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?");
+    const insertItemNote = db_1.db.prepare('INSERT INTO inquiry_notes (id, inquiry_id, item_id, note, created_by, created_by_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    const applyReviewRouting = db_1.db.transaction(() => {
+        const now = new Date().toISOString();
+        for (const item of items) {
+            if (reviewIds.has(item.id)) {
+                const nextRound = Number(item.review_round ?? 0) + 1;
+                setNeedsReview.run('review', nextRound, item.id);
+                insertItemNote.run((0, id_1.generateId)(), id, item.id, `Price Review requested. Reason: ${reason}`, String(doneBy), String(doneByName ?? doneBy), now);
+            }
+            else {
+                keepApproved.run(item.id);
+            }
+        }
+    });
+    applyReviewRouting();
+    db_1.db.prepare('UPDATE inquiries SET status = ?, sourcing_pic = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+        .run('price_approval', String(doneByName ?? doneBy), new Date().toISOString(), String(doneBy), id);
+    logActivity(id, `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`, 'price_approved', 'price_approval', `Items: ${itemsNeedingReview.length}. Reason: ${reason}${reopeningRejectedCount > 0 ? ' (includes rejected item negotiation reopen)' : ''}`, String(doneBy), String(doneByName ?? doneBy));
+    res.json({ ok: true });
+});
+// POST /inquiries/:id/send-to-price-approved — Manager manually submits to Price Approved
+exports.inquiriesRouter.post('/:id/send-to-price-approved', (req, res) => {
+    const { id } = req.params;
+    const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
+    if (!inquiry) {
+        res.status(404).json({ error: 'Not found.' });
+        return;
+    }
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
+        return;
+    }
+    const { doneBy, doneByName } = req.body;
+    if (!doneBy) {
+        res.status(400).json({ error: 'doneBy is required.' });
+        return;
+    }
+    db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+        .run('price_approved', new Date().toISOString(), String(doneBy), id);
+    logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
     res.json({ ok: true });
 });
 // POST /inquiries/:id/approve — Manager approves price
@@ -859,8 +1087,8 @@ exports.inquiriesRouter.post('/:id/approve', (req, res) => {
         return;
     }
     const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
-    db_1.db.prepare(`UPDATE inquiry_items SET harga_jual = ?, margin = ?, lead_time_customer = ?,
-       validitas_quotation = ?, catatan_quotation = ? WHERE id = ?`).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
+    db_1.db.prepare(`UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
+       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
     logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
@@ -887,28 +1115,53 @@ exports.inquiriesRouter.post('/:id/items/:itemId/approve', (req, res) => {
         return;
     }
     const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
-    db_1.db.prepare(`UPDATE inquiry_items SET harga_jual = ?, margin = ?, lead_time_customer = ?,
-       validitas_quotation = ?, catatan_quotation = ? WHERE id = ?`).run(hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
+    db_1.db.prepare(`UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
+       validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
     logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
 });
-// POST /inquiries/:id/follow-up — Sales marks follow up
-exports.inquiriesRouter.post('/:id/follow-up', (req, res) => {
-    const { id } = req.params;
+// POST /inquiries/:id/items/:itemId/reject — Manager rejects a price proposal
+exports.inquiriesRouter.post('/:id/items/:itemId/reject', (req, res) => {
+    const { id, itemId } = req.params;
     const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
     if (!inquiry) {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'quotation_sent') {
-        res.status(400).json({ error: 'Inquiry must be in quotation_sent status.' });
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
         return;
     }
-    const { doneBy, doneByName, note } = req.body;
-    db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-        .run('follow_up', new Date().toISOString(), doneBy, id);
-    logActivity(id, 'Follow up / Negotiation', 'quotation_sent', 'follow_up', String(note ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+    const item = db_1.db.prepare('SELECT id, review_round, item_name, review_status, needs_price_review FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
+    if (!item) {
+        res.status(404).json({ error: 'Item not found.' });
+        return;
+    }
+    if (item.review_status !== 'review' && item.needs_price_review !== 1) {
+        res.status(400).json({ error: 'Only items in review status can be rejected.' });
+        return;
+    }
+    const { doneBy, doneByName, reason } = req.body;
+    const rejectReason = String(reason ?? '').trim();
+    if (!doneBy) {
+        res.status(400).json({ error: 'doneBy is required.' });
+        return;
+    }
+    if (!rejectReason) {
+        res.status(400).json({ error: 'reason is required.' });
+        return;
+    }
+    const nextRound = Number(item.review_round ?? 0) + 1;
+    db_1.db.prepare(`UPDATE inquiry_items
+     SET price_approved = 0,
+         needs_price_review = 1,
+         review_status = 'rejected',
+         review_round = ?
+     WHERE id = ?`).run(nextRound, itemId);
+    logActivity(id, `Price rejected (${item.item_name ?? 'Item'})`, 'price_approval', 'price_approval', rejectReason, String(doneBy), String(doneByName ?? doneBy));
+    db_1.db.prepare(`INSERT INTO inquiry_notes (id, inquiry_id, item_id, note, created_by, created_by_name, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`).run((0, id_1.generateId)(), id, itemId, `Reject reason: ${rejectReason}`, String(doneBy), String(doneByName ?? doneBy), new Date().toISOString());
     res.json({ ok: true });
 });
 // POST /inquiries/:id/close — Sales or Manager closes as deal/lost
@@ -919,7 +1172,7 @@ exports.inquiriesRouter.post('/:id/close', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    const closeableStatuses = ['new_inquiry', 'rfq', 'quotation_sent', 'follow_up'];
+    const closeableStatuses = ['new_inquiry', 'rfq', 'quotation_sent'];
     if (!closeableStatuses.includes(inquiry.status)) {
         res.status(400).json({ error: 'Cannot close inquiry at this stage.' });
         return;
@@ -933,6 +1186,24 @@ exports.inquiriesRouter.post('/:id/close', (req, res) => {
     db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
         .run(outcome, new Date().toISOString(), doneBy, id);
     logActivity(id, `Closed as ${String(outcome)}`, oldStatus, String(outcome), String(note ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+    res.json({ ok: true });
+});
+// POST /inquiries/:id/ready-to-purchase — move a deal to ready_to_purchase
+exports.inquiriesRouter.post('/:id/ready-to-purchase', (req, res) => {
+    const { id } = req.params;
+    const inquiry = db_1.db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id);
+    if (!inquiry) {
+        res.status(404).json({ error: 'Not found.' });
+        return;
+    }
+    if (inquiry.status !== 'deal') {
+        res.status(400).json({ error: 'Only deal inquiries can be moved to Ready to Purchase.' });
+        return;
+    }
+    const { doneBy, doneByName } = req.body;
+    db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+        .run('ready_to_purchase', new Date().toISOString(), doneBy, id);
+    logActivity(id, 'Moved to Ready to Purchase', 'deal', 'ready_to_purchase', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
 });
 // GET /inquiries/:id/notes

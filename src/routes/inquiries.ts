@@ -1175,8 +1175,8 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   });
   applyReviewRouting();
 
-  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run('price_approval', new Date().toISOString(), String(doneBy), id);
+  db.prepare('UPDATE inquiries SET status = ?, sourcing_pic = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+    .run('price_approval', String(doneByName ?? doneBy), new Date().toISOString(), String(doneBy), id);
   logActivity(
     id,
     `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
