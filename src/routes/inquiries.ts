@@ -1135,7 +1135,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   const itemsNeedingReview = items.filter((item) =>
     item.price_approved !== 1 ||
     item.harga_jual == null ||
-    item.review_status === 'rejected' ||
+    item.review_status === 'review' ||
     item.needs_price_review === 1 ||
     (item.harga_jual != null && item.approved_price != null && item.harga_jual < item.approved_price)
   );
@@ -1144,7 +1144,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     res.status(400).json({ error: 'No item needs price review.' }); return;
   }
 
-  const reopeningRejectedCount = itemsNeedingReview.filter((item) => item.review_status === 'rejected').length;
+  const reopeningReviewCount = itemsNeedingReview.filter((item) => item.review_status === 'review').length;
 
   const reviewIds = new Set(itemsNeedingReview.map((item) => item.id));
   const setNeedsReview = db.prepare('UPDATE inquiry_items SET price_approved = 0, needs_price_review = 1, review_status = ?, review_round = ? WHERE id = ?');
@@ -1182,7 +1182,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
     'price_approved',
     'price_approval',
-    `Items: ${itemsNeedingReview.length}. Reason: ${reason}${reopeningRejectedCount > 0 ? ' (includes rejected item negotiation reopen)' : ''}`,
+    `Items: ${itemsNeedingReview.length}. Reason: ${reason}${reopeningReviewCount > 0 ? ' (includes negotiation review items)' : ''}`,
     String(doneBy),
     String(doneByName ?? doneBy)
   );
