@@ -73,7 +73,7 @@ function mapItem(row: Record<string, unknown>) {
     catatanQuotation: row['catatan_quotation'],
     priceApproved: row['price_approved'] === 1,
     needsPriceReview: row['needs_price_review'] === 1,
-    reviewStatus: row['review_status'] ?? 'pending',
+    reviewStatus: row['review_status'] === 'rejected' ? 'review' : (row['review_status'] ?? 'pending'),
     reviewRound: Number(row['review_round'] ?? 0),
     sourcingMissed: row['sourcing_missed'] === 1,
   };
@@ -1265,7 +1265,7 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
   res.json({ ok: true });
 });
 
-// POST /inquiries/:id/items/:itemId/reject — Manager rejects a price proposal
+// POST /inquiries/:id/items/:itemId/reject — Manager sets counter price for negotiation
 inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) => {
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
@@ -1285,30 +1285,34 @@ inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) 
   } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
   if (item.review_status !== 'review' && item.needs_price_review !== 1) {
-    res.status(400).json({ error: 'Only items in review status can be rejected.' }); return;
+    res.status(400).json({ error: 'Only items in review status can be updated.' }); return;
   }
 
-  const { doneBy, doneByName, reason } = req.body as Record<string, unknown>;
-  const rejectReason = String(reason ?? '').trim();
+  const { doneBy, doneByName, reason, counterPrice } = req.body as Record<string, unknown>;
+  const negotiationReason = String(reason ?? '').trim();
+  const nextCounterPrice = Number(counterPrice);
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
-  if (!rejectReason) { res.status(400).json({ error: 'reason is required.' }); return; }
+  if (!Number.isFinite(nextCounterPrice) || nextCounterPrice <= 0) {
+    res.status(400).json({ error: 'counterPrice is required.' }); return;
+  }
 
   const nextRound = Number(item.review_round ?? 0) + 1;
   db.prepare(
     `UPDATE inquiry_items
      SET price_approved = 0,
          needs_price_review = 1,
-         review_status = 'rejected',
+         review_status = 'review',
+         approved_price = ?,
          review_round = ?
      WHERE id = ?`
-  ).run(nextRound, itemId);
+  ).run(nextCounterPrice, nextRound, itemId);
 
   logActivity(
     id,
-    `Price rejected (${item.item_name ?? 'Item'})`,
+    `Counter price updated (${item.item_name ?? 'Item'})`,
     'price_approval',
     'price_approval',
-    rejectReason,
+    `Counter price: Rp ${nextCounterPrice.toLocaleString('id-ID')}${negotiationReason ? `. ${negotiationReason}` : ''}`,
     String(doneBy),
     String(doneByName ?? doneBy)
   );
@@ -1320,7 +1324,7 @@ inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) 
     generateId(),
     id,
     itemId,
-    `Reject reason: ${rejectReason}`,
+    `Counter price set to Rp ${nextCounterPrice.toLocaleString('id-ID')}${negotiationReason ? `. Note: ${negotiationReason}` : ''}`,
     String(doneBy),
     String(doneByName ?? doneBy),
     new Date().toISOString()
