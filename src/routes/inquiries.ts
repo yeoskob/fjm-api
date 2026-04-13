@@ -89,6 +89,7 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
     sourcingPic: row['sourcing_pic'] ?? null,
     status: row['status'],
     coupaSource: row['coupa_source'] === 1,
+    organization: row['organization'] ?? 'FJM',
     coupaFileName: row['coupa_file_name'] ?? null,
     createdAt: row['created_at'],
     createdBy: row['created_by'],
@@ -99,6 +100,12 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
     needByDate: row['deadline_quotation'] ?? null,
     items: items.map(mapItem),
   };
+}
+
+function normalizeOrganization(value: unknown): 'FJM' | 'FMI' | 'FSA' | null {
+  const v = String(value ?? '').trim().toUpperCase();
+  if (v === 'FJM' || v === 'FMI' || v === 'FSA') return v;
+  return null;
 }
 
 function deriveCustomerFromFilename(fileName: string): string {
@@ -394,9 +401,10 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
 
 // POST /inquiries/import-coupa
 inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
-  const { fileBase64, fileName, createdBy, createdByName } = req.body as Record<string, unknown>;
-  if (!fileBase64 || !fileName || !createdBy) {
-    res.status(400).json({ error: 'fileBase64, fileName, createdBy are required.' });
+  const { fileBase64, fileName, createdBy, createdByName, organization } = req.body as Record<string, unknown>;
+  const org = normalizeOrganization(organization);
+  if (!fileBase64 || !fileName || !createdBy || !org) {
+    res.status(400).json({ error: 'fileBase64, fileName, createdBy, organization are required. Organization must be FJM/FMI/FSA.' });
     return;
   }
 
@@ -487,9 +495,9 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
 
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, status, coupa_source, coupa_file_name, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'new_inquiry', 1, ?, ?, ?)`
-    ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, String(fileName), createdAt, createdBy);
+      `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, status, coupa_source, organization, coupa_file_name, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'new_inquiry', 1, ?, ?, ?, ?)`
+    ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, org, String(fileName), createdAt, createdBy);
 
     const insertItem = db.prepare(
       `INSERT INTO inquiry_items (
@@ -768,11 +776,12 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
 
 // POST /inquiries
 inquiriesRouter.post('/', (req: Request, res: Response) => {
-  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, createdBy, createdByName } =
+  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, createdBy, createdByName, organization } =
     req.body as Record<string, unknown>;
+  const org = normalizeOrganization(organization);
 
-  if (!customer || !salesPic || !namaBarang || !createdBy) {
-    res.status(400).json({ error: 'customer, salesPic, namaBarang, createdBy are required.' });
+  if (!customer || !salesPic || !namaBarang || !createdBy || !org) {
+    res.status(400).json({ error: 'customer, salesPic, namaBarang, createdBy, organization are required. Organization must be FJM/FMI/FSA.' });
     return;
   }
 
@@ -783,9 +792,9 @@ inquiriesRouter.post('/', (req: Request, res: Response) => {
   const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
 
   db.prepare(
-    `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, deadline_quotation, lampiran, status, created_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_inquiry', ?, ?)`
-  ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, createdAt, createdBy);
+    `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, deadline_quotation, lampiran, organization, status, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new_inquiry', ?, ?)`
+  ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, org, createdAt, createdBy);
 
   db.prepare(
     `INSERT INTO inquiry_items (

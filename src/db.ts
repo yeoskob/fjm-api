@@ -56,6 +56,7 @@ db.exec(`
     sales_pic TEXT NOT NULL,
     sourcing_pic TEXT,
     coupa_source INTEGER NOT NULL DEFAULT 0,
+    organization TEXT NOT NULL DEFAULT 'FJM',
     coupa_file_name TEXT,
     nama_barang TEXT,
     spesifikasi TEXT,
@@ -205,7 +206,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 14;
+const LATEST_VERSION = 15;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -374,6 +375,16 @@ const migrations: Array<{ version: number; run: () => void }> = [
       }
     },
   },
+  {
+    // Add organization to inquiries
+    version: 15,
+    run: () => {
+      if (!cols('inquiries').includes('organization')) {
+        db.exec("ALTER TABLE inquiries ADD COLUMN organization TEXT NOT NULL DEFAULT 'FJM'");
+      }
+      db.exec("UPDATE inquiries SET organization = 'FJM' WHERE organization IS NULL OR organization = ''");
+    },
+  },
 ];
 
 const runMigrations = () => {
@@ -427,6 +438,10 @@ const ensureInquiriesColumns = () => {
   if (!c.includes('sent_incomplete_reason')) {
     db.exec('ALTER TABLE inquiries ADD COLUMN sent_incomplete_reason TEXT');
   }
+  if (!c.includes('organization')) {
+    db.exec("ALTER TABLE inquiries ADD COLUMN organization TEXT NOT NULL DEFAULT 'FJM'");
+  }
+  db.exec("UPDATE inquiries SET organization = 'FJM' WHERE organization IS NULL OR organization = ''");
 };
 
 ensureInquiriesColumns();
