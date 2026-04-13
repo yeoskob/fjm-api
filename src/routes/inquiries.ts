@@ -823,17 +823,22 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
 
   const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, updatedBy, updatedByName } =
     req.body as Record<string, unknown>;
+  const org = req.body ? normalizeOrganization((req.body as Record<string, unknown>)['organization']) : null;
+  if ((req.body as Record<string, unknown>)['organization'] != null && !org) {
+    res.status(400).json({ error: 'organization must be FJM/FMI/FSA.' }); return;
+  }
 
   const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
 
   db.prepare(
     `UPDATE inquiries SET
        customer = COALESCE(?, customer), sales_pic = COALESCE(?, sales_pic),
+       organization = COALESCE(?, organization),
        nama_barang = COALESCE(?, nama_barang), spesifikasi = ?, qty = ?,
        deadline_quotation = ?, lampiran = ?,
        updated_at = ?, updated_by = ?
      WHERE id = ?`
-  ).run(customer ?? null, salesPic ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
+  ).run(customer ?? null, salesPic ?? null, org ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
 
   const itemCount = (db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id) as { c: number }).c;
   if (itemCount === 1) {
