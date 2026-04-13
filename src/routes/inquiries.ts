@@ -102,10 +102,11 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
   };
 }
 
-function normalizeOrganization(value: unknown): 'FJM' | 'FMI' | 'FSA' | null {
+function normalizeOrganization(value: unknown): string | null {
   const v = String(value ?? '').trim().toUpperCase();
-  if (v === 'FJM' || v === 'FMI' || v === 'FSA') return v;
-  return null;
+  if (!v) return null;
+  const exists = db.prepare('SELECT id FROM organizations WHERE code = ?').get(v) as { id: string } | undefined;
+  return exists ? v : null;
 }
 
 function deriveCustomerFromFilename(fileName: string): string {
@@ -404,7 +405,7 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
   const { fileBase64, fileName, createdBy, createdByName, organization } = req.body as Record<string, unknown>;
   const org = normalizeOrganization(organization);
   if (!fileBase64 || !fileName || !createdBy || !org) {
-    res.status(400).json({ error: 'fileBase64, fileName, createdBy, organization are required. Organization must be FJM/FMI/FSA.' });
+    res.status(400).json({ error: 'fileBase64, fileName, createdBy, organization are required. Organization must exist in Settings.' });
     return;
   }
 
@@ -781,7 +782,7 @@ inquiriesRouter.post('/', (req: Request, res: Response) => {
   const org = normalizeOrganization(organization);
 
   if (!customer || !salesPic || !namaBarang || !createdBy || !org) {
-    res.status(400).json({ error: 'customer, salesPic, namaBarang, createdBy, organization are required. Organization must be FJM/FMI/FSA.' });
+    res.status(400).json({ error: 'customer, salesPic, namaBarang, createdBy, organization are required. Organization must exist in Settings.' });
     return;
   }
 
@@ -825,7 +826,7 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
     req.body as Record<string, unknown>;
   const org = req.body ? normalizeOrganization((req.body as Record<string, unknown>)['organization']) : null;
   if ((req.body as Record<string, unknown>)['organization'] != null && !org) {
-    res.status(400).json({ error: 'organization must be FJM/FMI/FSA.' }); return;
+    res.status(400).json({ error: 'organization must exist in Settings.' }); return;
   }
 
   const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;

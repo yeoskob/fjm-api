@@ -148,6 +148,13 @@ db.exec(`
     value TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS organizations (
+    id TEXT PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS inquiry_notes (
     id TEXT PRIMARY KEY,
     inquiry_id TEXT NOT NULL,
@@ -206,7 +213,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 15;
+const LATEST_VERSION = 16;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -385,6 +392,27 @@ const migrations: Array<{ version: number; run: () => void }> = [
       db.exec("UPDATE inquiries SET organization = 'FJM' WHERE organization IS NULL OR organization = ''");
     },
   },
+  {
+    // Create organizations master table and seed defaults
+    version: 16,
+    run: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS organizations (
+          id TEXT PRIMARY KEY,
+          code TEXT UNIQUE NOT NULL,
+          created_at TEXT NOT NULL,
+          created_by TEXT
+        )
+      `);
+      const now = new Date().toISOString();
+      const insertOrg = db.prepare(
+        'INSERT OR IGNORE INTO organizations (id, code, created_at, created_by) VALUES (?, ?, ?, ?)'
+      );
+      insertOrg.run(generateId(), 'FJM', now, 'system');
+      insertOrg.run(generateId(), 'FMI', now, 'system');
+      insertOrg.run(generateId(), 'FSA', now, 'system');
+    },
+  },
 ];
 
 const runMigrations = () => {
@@ -446,6 +474,19 @@ const ensureInquiriesColumns = () => {
 
 ensureInquiriesColumns();
 
+const ensureOrganizationsTable = () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by TEXT
+    )
+  `);
+};
+
+ensureOrganizationsTable();
+
 // ─── Seed data ────────────────────────────────────────────────────────────────
 
 const ensureDefaultRoles = () => {
@@ -482,6 +523,20 @@ const seedUsers = () => {
   tx(seed);
 };
 
+const seedOrganizations = () => {
+  const now = new Date().toISOString();
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO organizations (id, code, created_at, created_by) VALUES (?, ?, ?, ?)'
+  );
+  const tx = db.transaction(() => {
+    insert.run(generateId(), 'FJM', now, 'system');
+    insert.run(generateId(), 'FMI', now, 'system');
+    insert.run(generateId(), 'FSA', now, 'system');
+  });
+  tx();
+};
+
 ensureDefaultRoles();
 seedUsers();
+seedOrganizations();
 db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_margin_pct', '20')`).run();
