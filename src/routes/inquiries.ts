@@ -325,10 +325,10 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
 
   // Manager stats
   const approvalsTotal = (db.prepare(
-    `SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved'`
+    `SELECT COUNT(DISTINCT inquiry_id) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved'`
   ).get(name) as { c: number }).c;
   const approvalsThisMonth = (db.prepare(
-    `SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved' AND created_at >= ?`
+    `SELECT COUNT(DISTINCT inquiry_id) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved' AND created_at >= ?`
   ).get(name, startOfMonthIso) as { c: number }).c;
   const inquiriesApproved = (db.prepare(
     `SELECT COUNT(DISTINCT inquiry_id) as c FROM activity_log WHERE done_by_name = ? AND action = 'Price approved'`
