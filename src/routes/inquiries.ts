@@ -308,7 +308,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
      WHERE i.sourcing_pic = ?
-       AND ii.supplier IS NOT NULL AND ii.harga_beli IS NOT NULL AND ii.lead_time IS NOT NULL
+       AND COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != ''
        AND ii.sourcing_missed = 0`
   ).get(name) as { c: number }).c;
   const userItemsMissed = (db.prepare(
@@ -319,8 +319,8 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   const userItemsTidakTerisi = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
-     WHERE i.sourcing_pic = ?
-       AND (ii.supplier IS NULL OR ii.harga_beli IS NULL OR ii.lead_time IS NULL)`
+     WHERE i.sourcing_pic = ? AND ii.sourcing_missed = 0
+       AND (COALESCE(ii.supplier,'') = '' OR ii.harga_beli IS NULL OR COALESCE(ii.lead_time,'') = '')`
   ).get(name) as { c: number }).c;
 
   // Manager stats
@@ -369,14 +369,20 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ status: string; count: number }>;
 
   // Item state breakdown — single source of truth from inquiry_items current state
+  // Terisi = all three required sourcing fields filled (not empty/null) and not missed
   const itemsTerisi = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiry_items WHERE supplier IS NOT NULL AND harga_beli IS NOT NULL AND lead_time IS NOT NULL AND sourcing_missed = 0`
+    `SELECT COUNT(*) as c FROM inquiry_items
+     WHERE COALESCE(supplier,'') != '' AND harga_beli IS NOT NULL AND COALESCE(lead_time,'') != ''
+       AND sourcing_missed = 0`
   ).get() as { c: number }).c;
   const itemsMissed = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items WHERE sourcing_missed = 1`
   ).get() as { c: number }).c;
+  // Tidak Terisi = not missed AND any required field is missing/empty
   const itemsTidakTerisi = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiry_items WHERE (supplier IS NULL OR harga_beli IS NULL OR lead_time IS NULL)`
+    `SELECT COUNT(*) as c FROM inquiry_items
+     WHERE sourcing_missed = 0
+       AND (COALESCE(supplier,'') = '' OR harga_beli IS NULL OR COALESCE(lead_time,'') = '')`
   ).get() as { c: number }).c;
 
   // Sourcing stats — use inquiry_items for totals so stat cards match the pie chart
