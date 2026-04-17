@@ -1032,9 +1032,10 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
     res.status(400).json({ error: 'Inquiry must be in RFQ status.' }); return;
   }
 
-  const item = db.prepare('SELECT id, price_approved, item_need_by_date FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; price_approved: number; item_need_by_date: string | null } | undefined;
+  const item = db.prepare('SELECT id, price_approved, sourcing_missed, item_need_by_date FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; price_approved: number; sourcing_missed: number; item_need_by_date: string | null } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
   if (item.price_approved) { res.status(400).json({ error: 'Item already approved, cannot edit.' }); return; }
+  if (item.sourcing_missed) { res.status(400).json({ error: 'Item is marked as missed and can no longer be filled.' }); return; }
 
   const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, alternateName, doneBy, doneByName } =
     req.body as Record<string, unknown>;
