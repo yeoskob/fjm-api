@@ -231,6 +231,13 @@ function autoMarkMissedRfqs(): void {
       AND status = 'rfq'
       AND deadline_quotation IS NOT NULL
       AND date(deadline_quotation) < date('now')
+      AND NOT EXISTS (
+        SELECT 1 FROM inquiry_items ii
+        WHERE ii.inquiry_id = inquiries.id
+          AND COALESCE(ii.supplier,'') != ''
+          AND ii.harga_beli IS NOT NULL
+          AND COALESCE(ii.lead_time,'') != ''
+      )
   `).run();
 }
 
