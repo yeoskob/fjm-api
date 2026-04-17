@@ -222,8 +222,21 @@ function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: stri
   void doneByName;
 }
 
+function autoMarkMissedItems(): void {
+  db.prepare(`
+    UPDATE inquiry_items
+    SET sourcing_missed = 1
+    WHERE sourcing_missed = 0
+      AND (COALESCE(supplier, '') = '' OR harga_beli IS NULL OR COALESCE(lead_time, '') = '')
+      AND item_need_by_date IS NOT NULL
+      AND date(item_need_by_date) < date('now')
+      AND inquiry_id IN (SELECT id FROM inquiries WHERE status = 'rfq')
+  `).run();
+}
+
 // GET /inquiries
 inquiriesRouter.get('/', (_req: Request, res: Response) => {
+  autoMarkMissedItems();
   const rows = db.prepare('SELECT * FROM inquiries ORDER BY created_at DESC').all() as Array<Record<string, unknown>>;
   const items = db.prepare('SELECT * FROM inquiry_items ORDER BY coupa_row_index ASC, id ASC').all() as Array<Record<string, unknown>>;
   const logs = db.prepare('SELECT * FROM activity_log ORDER BY created_at ASC').all() as Array<Record<string, unknown>>;
@@ -343,6 +356,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
 
 // GET /inquiries/dashboard
 inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
+  autoMarkMissedItems();
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
@@ -796,11 +810,7 @@ inquiriesRouter.post('/', (req: Request, res: Response) => {
   const rfqNo = generateRfqNo();
   const tanggal = new Date().toISOString().split('T')[0];
   const createdAt = new Date().toISOString();
-  // TEMP: shift need-by date 1 day into the past for missed-sourcing testing
-  const rawNeedByDate = itemNeedByDate ?? deadlineQuotation ?? null;
-  const needByDate = rawNeedByDate
-    ? new Date(new Date(String(rawNeedByDate)).getTime() - 86400000).toISOString().split('T')[0]
-    : null;
+  const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
 
   db.prepare(
     `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, deadline_quotation, lampiran, organization, status, created_at, created_by)
