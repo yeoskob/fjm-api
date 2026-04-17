@@ -378,6 +378,12 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
     `SELECT sales_pic, COUNT(*) as deal_count FROM inquiries WHERE status = 'deal' GROUP BY sales_pic ORDER BY deal_count DESC LIMIT 5`
   ).all() as Array<{ sales_pic: string; deal_count: number }>;
 
+  const topMarketing = db.prepare(
+    `SELECT sales_pic, COUNT(*) as sent_count FROM inquiries
+     WHERE status IN ('quotation_sent', 'ready_to_purchase')
+     GROUP BY sales_pic ORDER BY sent_count DESC LIMIT 5`
+  ).all() as Array<{ sales_pic: string; sent_count: number }>;
+
   const statusBreakdown = db.prepare(
     `SELECT status, COUNT(*) as count FROM inquiries GROUP BY status ORDER BY count DESC`
   ).all() as Array<{ status: string; count: number }>;
@@ -414,7 +420,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ sourcing_pic: string; items_count: number }>;
 
   res.json({
-    total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, conversionRate, topSales, statusBreakdown,
+    total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, conversionRate, topSales, topMarketing, statusBreakdown,
     sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers,
     itemsTerisi, itemsTidakTerisi, itemsMissed,
   });
