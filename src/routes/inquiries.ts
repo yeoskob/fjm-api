@@ -98,6 +98,7 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
     sentIncomplete: row['sent_incomplete'] === 1,
     sentIncompleteReason: row['sent_incomplete_reason'] ?? null,
     needByDate: row['deadline_quotation'] ?? null,
+    sourcingMissed: row['sourcing_missed'] === 1,
     items: items.map(mapItem),
   };
 }
@@ -222,21 +223,20 @@ function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: stri
   void doneByName;
 }
 
-function autoMarkMissedItems(): void {
+function autoMarkMissedRfqs(): void {
   db.prepare(`
-    UPDATE inquiry_items
+    UPDATE inquiries
     SET sourcing_missed = 1
     WHERE sourcing_missed = 0
-      AND (COALESCE(supplier, '') = '' OR harga_beli IS NULL OR COALESCE(lead_time, '') = '')
-      AND item_need_by_date IS NOT NULL
-      AND date(item_need_by_date) < date('now')
-      AND inquiry_id IN (SELECT id FROM inquiries WHERE status = 'rfq')
+      AND status = 'rfq'
+      AND deadline_quotation IS NOT NULL
+      AND date(deadline_quotation) < date('now')
   `).run();
 }
 
 // GET /inquiries
 inquiriesRouter.get('/', (_req: Request, res: Response) => {
-  autoMarkMissedItems();
+  autoMarkMissedRfqs();
   const rows = db.prepare('SELECT * FROM inquiries ORDER BY created_at DESC').all() as Array<Record<string, unknown>>;
   const items = db.prepare('SELECT * FROM inquiry_items ORDER BY coupa_row_index ASC, id ASC').all() as Array<Record<string, unknown>>;
   const logs = db.prepare('SELECT * FROM activity_log ORDER BY created_at ASC').all() as Array<Record<string, unknown>>;
@@ -320,19 +320,18 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   const userItemsTerisi = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
-     WHERE i.sourcing_pic = ?
-       AND COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != ''
-       AND ii.sourcing_missed = 0`
+     WHERE i.sourcing_pic = ? AND i.sourcing_missed = 0
+       AND COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != ''`
   ).get(name) as { c: number }).c;
   const userItemsMissed = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
-     WHERE i.sourcing_pic = ? AND ii.sourcing_missed = 1`
+     WHERE i.sourcing_pic = ? AND i.sourcing_missed = 1`
   ).get(name) as { c: number }).c;
   const userItemsTidakTerisi = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
-     WHERE i.sourcing_pic = ? AND ii.sourcing_missed = 0
+     WHERE i.sourcing_pic = ? AND i.sourcing_missed = 0
        AND (COALESCE(ii.supplier,'') = '' OR ii.harga_beli IS NULL OR COALESCE(ii.lead_time,'') = '')`
   ).get(name) as { c: number }).c;
 
@@ -356,7 +355,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
 
 // GET /inquiries/dashboard
 inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
-  autoMarkMissedItems();
+  autoMarkMissedRfqs();
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
@@ -388,26 +387,28 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
     `SELECT status, COUNT(*) as count FROM inquiries GROUP BY status ORDER BY count DESC`
   ).all() as Array<{ status: string; count: number }>;
 
-  // Item state breakdown — single source of truth from inquiry_items current state
-  // Terisi = all three required sourcing fields filled (not empty/null) and not missed
+  // RFQ-level sourcing breakdown
+  const rfqsMissed = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq' AND sourcing_missed = 1`).get() as { c: number }).c;
+
+  // Item state breakdown — scoped to non-missed RFQs only
   const itemsTerisi = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiry_items
-     WHERE COALESCE(supplier,'') != '' AND harga_beli IS NOT NULL AND COALESCE(lead_time,'') != ''
-       AND sourcing_missed = 0`
+    `SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_missed = 0
+       AND COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != ''`
   ).get() as { c: number }).c;
   const itemsMissed = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiry_items WHERE sourcing_missed = 1`
+    `SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id IN (SELECT id FROM inquiries WHERE sourcing_missed = 1)`
   ).get() as { c: number }).c;
-  // Tidak Terisi = not missed AND any required field is missing/empty
   const itemsTidakTerisi = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiry_items
-     WHERE sourcing_missed = 0
-       AND (COALESCE(supplier,'') = '' OR harga_beli IS NULL OR COALESCE(lead_time,'') = '')`
+    `SELECT COUNT(*) as c FROM inquiry_items ii
+     JOIN inquiries i ON i.id = ii.inquiry_id
+     WHERE i.sourcing_missed = 0
+       AND (COALESCE(ii.supplier,'') = '' OR ii.harga_beli IS NULL OR COALESCE(ii.lead_time,'') = '')`
   ).get() as { c: number }).c;
 
-  // Sourcing stats — use inquiry_items for totals so stat cards match the pie chart
-  const sourcingPending = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq'`).get() as { c: number }).c;
-  // Total sourced = items with supplier data filled (terisi + missed)
+  // Sourcing stats
+  const sourcingPending = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq' AND sourcing_missed = 0`).get() as { c: number }).c;
   const sourcingItemsTotal = itemsTerisi + itemsMissed;
   // "This month" approximated from activity_log (deduplication not possible without item timestamps)
   const sourcingItemsThisMonth = (db.prepare(
@@ -421,7 +422,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
 
   res.json({
     total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, conversionRate, topSales, topMarketing, statusBreakdown,
-    sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers,
+    sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers, rfqsMissed,
     itemsTerisi, itemsTidakTerisi, itemsMissed,
   });
 });
@@ -816,11 +817,7 @@ inquiriesRouter.post('/', (req: Request, res: Response) => {
   const rfqNo = generateRfqNo();
   const tanggal = new Date().toISOString().split('T')[0];
   const createdAt = new Date().toISOString();
-  // TEMP: shift need-by date 1 day into the past for missed-sourcing testing
-  const rawNeedByDate = itemNeedByDate ?? deadlineQuotation ?? null;
-  const needByDate = rawNeedByDate
-    ? new Date(new Date(String(rawNeedByDate)).getTime() - 86400000).toISOString().split('T')[0]
-    : null;
+  const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
 
   db.prepare(
     `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, deadline_quotation, lampiran, organization, status, created_at, created_by)
@@ -1030,16 +1027,16 @@ inquiriesRouter.post('/:id/sourcing-info', (req: Request, res: Response) => {
 
 inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Response) => {
   const { id, itemId } = req.params;
-  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  const inquiry = db.prepare('SELECT id, status, sourcing_missed FROM inquiries WHERE id = ?').get(id) as { id: string; status: string; sourcing_missed: number } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
   if (!['rfq', 'price_approval'].includes(inquiry.status)) {
     res.status(400).json({ error: 'Inquiry must be in RFQ status.' }); return;
   }
+  if (inquiry.sourcing_missed) { res.status(400).json({ error: 'RFQ is marked as missed and can no longer be filled.' }); return; }
 
-  const item = db.prepare('SELECT id, price_approved, sourcing_missed, item_need_by_date FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; price_approved: number; sourcing_missed: number; item_need_by_date: string | null } | undefined;
+  const item = db.prepare('SELECT id, price_approved FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; price_approved: number } | undefined;
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
   if (item.price_approved) { res.status(400).json({ error: 'Item already approved, cannot edit.' }); return; }
-  if (item.sourcing_missed) { res.status(400).json({ error: 'Item is marked as missed and can no longer be filled.' }); return; }
 
   const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, alternateName, doneBy, doneByName } =
     req.body as Record<string, unknown>;
@@ -1048,20 +1045,10 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
     res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' }); return;
   }
 
-  // Mark as missed if submitted after the item's need-by date
-  let sourcingMissed = 0;
-  if (item.item_need_by_date) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const needBy = new Date(item.item_need_by_date);
-    needBy.setHours(0, 0, 0, 0);
-    if (today > needBy) sourcingMissed = 1;
-  }
-
   db.prepare(
     `UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
-       stock_availability = ?, term_pembayaran = ?, alternate_name = ?, sourcing_missed = ? WHERE id = ?`
-  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, sourcingMissed, itemId);
+       stock_availability = ?, term_pembayaran = ?, alternate_name = ? WHERE id = ?`
+  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, itemId);
 
   logActivity(id, 'Sourcing info submitted', 'rfq', 'rfq', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));

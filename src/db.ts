@@ -213,7 +213,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 16;
+const LATEST_VERSION = 17;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -393,6 +393,14 @@ const migrations: Array<{ version: number; run: () => void }> = [
     },
   },
   {
+    // Add sourcing_missed to inquiries (RFQ-level missed tracking)
+    version: 17,
+    run: () => {
+      if (!cols('inquiries').includes('sourcing_missed'))
+        db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
+    },
+  },
+  {
     // Create organizations master table and seed defaults
     version: 16,
     run: () => {
@@ -470,6 +478,8 @@ const ensureInquiriesColumns = () => {
     db.exec("ALTER TABLE inquiries ADD COLUMN organization TEXT NOT NULL DEFAULT 'FJM'");
   }
   db.exec("UPDATE inquiries SET organization = 'FJM' WHERE organization IS NULL OR organization = ''");
+  if (!c.includes('sourcing_missed'))
+    db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
 };
 
 ensureInquiriesColumns();
