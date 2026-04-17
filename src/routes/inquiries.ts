@@ -422,9 +422,17 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
      GROUP BY done_by_name ORDER BY items_count DESC LIMIT 5`
   ).all() as Array<{ sourcing_pic: string; items_count: number }>;
 
+  const urgentRfqs = db.prepare(
+    `SELECT id, rfq_no, customer, sourcing_pic, deadline_quotation,
+       CAST(julianday(deadline_quotation) - julianday('now') AS INTEGER) as days_left
+     FROM inquiries
+     WHERE status = 'rfq' AND sourcing_missed = 0 AND deadline_quotation IS NOT NULL
+     ORDER BY deadline_quotation ASC LIMIT 8`
+  ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; deadline_quotation: string; days_left: number }>;
+
   res.json({
     total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, conversionRate, topSales, topMarketing, statusBreakdown,
-    sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers, rfqsMissed, rfqsMissedUnassigned,
+    sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers, urgentRfqs, rfqsMissed, rfqsMissedUnassigned,
     itemsTerisi, itemsTidakTerisi, itemsMissed, itemsMissedUnassigned,
   });
 });
