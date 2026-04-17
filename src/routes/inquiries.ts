@@ -816,7 +816,11 @@ inquiriesRouter.post('/', (req: Request, res: Response) => {
   const rfqNo = generateRfqNo();
   const tanggal = new Date().toISOString().split('T')[0];
   const createdAt = new Date().toISOString();
-  const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
+  // TEMP: shift need-by date 1 day into the past for missed-sourcing testing
+  const rawNeedByDate = itemNeedByDate ?? deadlineQuotation ?? null;
+  const needByDate = rawNeedByDate
+    ? new Date(new Date(String(rawNeedByDate)).getTime() - 86400000).toISOString().split('T')[0]
+    : null;
 
   db.prepare(
     `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, spesifikasi, qty, deadline_quotation, lampiran, organization, status, created_at, created_by)
