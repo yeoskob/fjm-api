@@ -302,11 +302,11 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ?').get(name) as { c: number }).c;
   const thisMonthSales = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND created_at >= ?').get(name, startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status IN ('quotation_sent','ready_to_purchase')`).get(name) as { c: number }).c;
-  const sentIncomplete = (db.prepare(
+  const unsent = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiries
-     WHERE sales_pic = ? AND status IN ('quotation_sent','ready_to_purchase') AND sent_incomplete = 1`
+     WHERE sales_pic = ? AND status = 'price_approved'
+       AND EXISTS (SELECT 1 FROM inquiry_items WHERE inquiry_id = inquiries.id AND item_need_by_date IS NOT NULL AND item_need_by_date < date('now'))`
   ).get(name) as { c: number }).c;
-  const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
   const active = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status NOT IN ('quotation_sent','ready_to_purchase')`).get(name) as { c: number }).c;
   const conversionRate = total > 0 ? +((quotationSent / total) * 100).toFixed(1) : 0;
   const statusBreakdown = db.prepare(
@@ -355,7 +355,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   ).get(name) as { c: number }).c;
 
   res.json({
-    salesStats: { total, thisMonth: thisMonthSales, quotationSent, sentIncomplete, sentIncompleteRate, active, conversionRate, statusBreakdown },
+    salesStats: { total, thisMonth: thisMonthSales, quotationSent, unsent, active, conversionRate, statusBreakdown },
     sourcingStats: { itemsSourced, inquiriesContributed, thisMonth: thisMonthSourcing, itemsTerisi: userItemsTerisi, itemsMissed: userItemsMissed, itemsTidakTerisi: userItemsTidakTerisi },
     managerStats: { approvalsTotal, approvalsThisMonth, inquiriesApproved },
   });
@@ -373,10 +373,10 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries').get() as { c: number }).c;
   const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','ready_to_purchase')`).get() as { c: number }).c;
-  const sentIncomplete = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','ready_to_purchase') AND sent_incomplete = 1`
+  const unsent = (db.prepare(
+    `SELECT COUNT(*) as c FROM inquiries WHERE status = 'price_approved'
+       AND EXISTS (SELECT 1 FROM inquiry_items WHERE inquiry_id = inquiries.id AND item_need_by_date IS NOT NULL AND item_need_by_date < date('now'))`
   ).get() as { c: number }).c;
-  const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
   const conversionRate = total > 0 ? +((quotationSent / total) * 100).toFixed(1) : 0;
 
   const topSales = db.prepare(
@@ -437,7 +437,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; deadline_quotation: string; days_left: number }>;
 
   res.json({
-    total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, conversionRate, topSales, topMarketing, statusBreakdown,
+    total, thisMonth, quotationSent, unsent, conversionRate, topSales, topMarketing, statusBreakdown,
     sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers, urgentRfqs, rfqsMissed, rfqsMissedUnassigned,
     itemsTerisi, itemsTidakTerisi, itemsMissed, itemsMissedUnassigned,
   });
