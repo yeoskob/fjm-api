@@ -257,14 +257,6 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
 
   const { month, salesPic } = req.query as { month?: string; salesPic?: string };
 
-  const months = (db.prepare(
-    `SELECT DISTINCT strftime('%Y-%m', created_at) as m FROM inquiries ORDER BY m DESC LIMIT 24`
-  ).all() as Array<{ m: string }>).map((r) => r.m);
-
-  const salesPics = (db.prepare(
-    `SELECT DISTINCT sales_pic FROM inquiries ORDER BY sales_pic ASC`
-  ).all() as Array<{ sales_pic: string }>).map((r) => r.sales_pic);
-
   const params: unknown[] = [];
   let where = `WHERE 1=1`;
   if (salesPic) { where += ` AND i.sales_pic = ?`; params.push(salesPic); }
@@ -288,7 +280,7 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
     ORDER BY i.tanggal DESC
   `).all(...params) as Array<Record<string, unknown>>;
 
-  res.json({ rows, months, salesPics });
+  res.json({ rows });
 });
 
 // GET /inquiries
