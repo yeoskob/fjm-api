@@ -227,7 +227,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 19;
+const LATEST_VERSION = 20;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -469,6 +469,13 @@ const migrations: Array<{ version: number; run: () => void }> = [
     run: () => {
       if (!cols('inquiry_items').includes('ppn_type'))
         db.exec('ALTER TABLE inquiry_items ADD COLUMN ppn_type TEXT');
+    },
+  },
+  {
+    // Migrate previously-flagged missed RFQs to status = 'missed'
+    version: 20,
+    run: () => {
+      db.exec(`UPDATE inquiries SET status = 'missed' WHERE status = 'rfq' AND sourcing_missed = 1`);
     },
   },
 ];
