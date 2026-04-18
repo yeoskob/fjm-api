@@ -6,6 +6,7 @@ import { productsRouter } from './routes/products';
 import { inquiriesRouter } from './routes/inquiries';
 import { rolesRouter } from './routes/roles';
 import { settingsRouter } from './routes/settings';
+import { notificationsRouter } from './routes/notifications';
 import { requireAuth } from './middleware/requireAuth';
 import './db';
 
@@ -23,6 +24,7 @@ app.use('/products', requireAuth, productsRouter);
 app.use('/inquiries', requireAuth, inquiriesRouter);
 app.use('/roles', requireAuth, rolesRouter);
 app.use('/settings', requireAuth, settingsRouter);
+app.use('/notifications', requireAuth, notificationsRouter);
 
 const port = Number(process.env.PORT) || 4000;
 app.listen(port, "0.0.0.0", () => {

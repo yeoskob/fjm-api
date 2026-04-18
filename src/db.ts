@@ -155,6 +155,18 @@ db.exec(`
     created_by TEXT
   );
 
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    inquiry_id TEXT NOT NULL,
+    rfq_no TEXT,
+    message TEXT NOT NULL,
+    triggered_by TEXT NOT NULL,
+    triggered_by_name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    read_at TEXT
+  );
+
   CREATE TABLE IF NOT EXISTS inquiry_notes (
     id TEXT PRIMARY KEY,
     inquiry_id TEXT NOT NULL,
@@ -213,7 +225,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 16;
+const LATEST_VERSION = 17;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -411,6 +423,26 @@ const migrations: Array<{ version: number; run: () => void }> = [
       insertOrg.run(generateId(), 'FJM', now, 'system');
       insertOrg.run(generateId(), 'FMI', now, 'system');
       insertOrg.run(generateId(), 'FSA', now, 'system');
+    },
+  },
+  {
+    // Create persistent notification queue for push events
+    version: 17,
+    run: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          inquiry_id TEXT NOT NULL,
+          rfq_no TEXT,
+          message TEXT NOT NULL,
+          triggered_by TEXT NOT NULL,
+          triggered_by_name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          read_at TEXT
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications (read_at)`);
     },
   },
 ];

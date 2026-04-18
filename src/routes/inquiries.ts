@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../db';
 import { generateId } from '../utils/id';
 import * as XLSX from 'xlsx';
+import { insertAndBroadcast } from './notifications';
 
 export const inquiriesRouter = Router();
 
@@ -1049,9 +1050,15 @@ inquiriesRouter.post('/:id/send-to-price-approval', (req: Request, res: Response
   const { doneBy, doneByName, note } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
+  const rfqRow = db.prepare('SELECT rfq_no FROM inquiries WHERE id = ?').get(id) as { rfq_no: string | null } | undefined;
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
     .run('price_approval', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Sent to Price Approval', 'rfq', 'price_approval', note ? String(note) : null, String(doneBy), String(doneByName ?? doneBy));
+  insertAndBroadcast(
+    'price_approval', id, rfqRow?.rfq_no ?? null,
+    `${rfqRow?.rfq_no ?? 'RFQ'} needs price approval — submitted by ${String(doneByName ?? doneBy)}`,
+    String(doneBy), String(doneByName ?? doneBy),
+  );
   res.json({ ok: true });
 });
 
@@ -1190,6 +1197,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   });
   applyReviewRouting();
 
+  const rfqRowReview = db.prepare('SELECT rfq_no FROM inquiries WHERE id = ?').get(id) as { rfq_no: string | null } | undefined;
   db.prepare('UPDATE inquiries SET status = ?, sourcing_pic = ?, updated_at = ?, updated_by = ? WHERE id = ?')
     .run('price_approval', String(doneByName ?? doneBy), new Date().toISOString(), String(doneBy), id);
   logActivity(
@@ -1200,6 +1208,11 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     `Items: ${itemsNeedingReview.length}. Reason: ${reason}${reopeningReviewCount > 0 ? ' (includes negotiation review items)' : ''}`,
     String(doneBy),
     String(doneByName ?? doneBy)
+  );
+  insertAndBroadcast(
+    'price_review', id, rfqRowReview?.rfq_no ?? null,
+    `${rfqRowReview?.rfq_no ?? 'RFQ'} sent for price review — ${String(doneByName ?? doneBy)} (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
+    String(doneBy), String(doneByName ?? doneBy),
   );
   res.json({ ok: true });
 });
