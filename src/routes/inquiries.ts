@@ -208,15 +208,7 @@ function normalizeLeadTime(value?: string | number | null): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
-function allItemsSourced(items: Array<Record<string, unknown>>): boolean {
-  if (items.length === 0) return false;
-  return items.every((item) => item['supplier'] && item['harga_beli'] != null && item['lead_time']);
-}
 
-function allItemsApproved(items: Array<Record<string, unknown>>): boolean {
-  if (items.length === 0) return false;
-  return items.every((item) => item['price_approved'] === 1);
-}
 
 function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: string) {
   // Manual transition is now required for price_approval -> price_approved.
@@ -796,7 +788,6 @@ inquiriesRouter.get('/:id/export-coupa', (req: Request, res: Response) => {
       const leadTime = normalizeLeadTime(leadTimeCustomer ?? leadTimeFallback ?? (item['bid_lead_time'] as string | number | null));
       const catatan = (item['catatan_quotation'] as string | null) ?? null;
       const description = catatan || (item['item_extended_description'] as string | null) || null;
-      const itemName = item['item_name'] as string | null;
       const itemQty = item['item_quantity'] as number | null;
       const bidCapacity = (item['bid_capacity'] ?? itemQty) as number | null;
       const bidCurrency = (item['bid_price_currency'] ?? null) as string | null;
