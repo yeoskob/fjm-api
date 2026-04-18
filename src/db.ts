@@ -70,7 +70,8 @@ db.exec(`
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
     updated_at TEXT,
-    updated_by TEXT
+    updated_by TEXT,
+    price_approval_started_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS inquiry_items (
@@ -225,7 +226,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 17;
+const LATEST_VERSION = 18;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -451,6 +452,14 @@ const migrations: Array<{ version: number; run: () => void }> = [
         )
       `);
       db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications (read_at)`);
+    },
+  },
+  {
+    // Add price_approval_started_at to track when an inquiry entered price_approval
+    version: 18,
+    run: () => {
+      if (!cols('inquiries').includes('price_approval_started_at'))
+        db.exec('ALTER TABLE inquiries ADD COLUMN price_approval_started_at TEXT');
     },
   },
 ];

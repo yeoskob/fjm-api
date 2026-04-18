@@ -100,6 +100,7 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
     sentIncompleteReason: row['sent_incomplete_reason'] ?? null,
     needByDate: row['deadline_quotation'] ?? null,
     sourcingMissed: row['sourcing_missed'] === 1,
+    priceApprovalStartedAt: row['price_approval_started_at'] ?? null,
     items: items.map(mapItem),
   };
 }
@@ -1086,8 +1087,9 @@ inquiriesRouter.post('/:id/send-to-price-approval', (req: Request, res: Response
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
   const rfqRow = db.prepare('SELECT rfq_no FROM inquiries WHERE id = ?').get(id) as { rfq_no: string | null } | undefined;
-  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run('price_approval', new Date().toISOString(), String(doneBy), id);
+  const now = new Date().toISOString();
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = ? WHERE id = ?')
+    .run('price_approval', now, String(doneBy), now, id);
   logActivity(id, 'Sent to Price Approval', 'rfq', 'price_approval', note ? String(note) : null, String(doneBy), String(doneByName ?? doneBy));
   insertAndBroadcast(
     'price_approval', id, rfqRow?.rfq_no ?? null,
@@ -1115,7 +1117,7 @@ inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) =>
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
-  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
     .run('rfq', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
   res.json({ ok: true });
@@ -1233,8 +1235,9 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   applyReviewRouting();
 
   const rfqRowReview = db.prepare('SELECT rfq_no FROM inquiries WHERE id = ?').get(id) as { rfq_no: string | null } | undefined;
-  db.prepare('UPDATE inquiries SET status = ?, sourcing_pic = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run('price_approval', String(doneByName ?? doneBy), new Date().toISOString(), String(doneBy), id);
+  const nowReview = new Date().toISOString();
+  db.prepare('UPDATE inquiries SET status = ?, sourcing_pic = ?, updated_at = ?, updated_by = ?, price_approval_started_at = ? WHERE id = ?')
+    .run('price_approval', String(doneByName ?? doneBy), nowReview, String(doneBy), nowReview, id);
   logActivity(
     id,
     `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
@@ -1264,7 +1267,7 @@ inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
-  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
+  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
     .run('price_approved', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
   res.json({ ok: true });
