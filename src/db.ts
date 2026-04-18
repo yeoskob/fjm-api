@@ -405,6 +405,14 @@ const migrations: Array<{ version: number; run: () => void }> = [
     },
   },
   {
+    // Add sourcing_missed to inquiries (RFQ-level missed tracking)
+    version: 17,
+    run: () => {
+      if (!cols('inquiries').includes('sourcing_missed'))
+        db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
+    },
+  },
+  {
     // Create organizations master table and seed defaults
     version: 16,
     run: () => {
@@ -502,6 +510,8 @@ const ensureInquiriesColumns = () => {
     db.exec("ALTER TABLE inquiries ADD COLUMN organization TEXT NOT NULL DEFAULT 'FJM'");
   }
   db.exec("UPDATE inquiries SET organization = 'FJM' WHERE organization IS NULL OR organization = ''");
+  if (!c.includes('sourcing_missed'))
+    db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
 };
 
 ensureInquiriesColumns();
