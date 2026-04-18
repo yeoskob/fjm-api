@@ -267,7 +267,7 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
       i.id, i.rfq_no, i.customer, i.sales_pic, i.tanggal, i.status,
       MIN(ii.item_need_by_date) AS need_by_date,
       CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
-      CAST(julianday(date(al_sent.sent_at, 'localtime')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
+      CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
     FROM inquiries i
     LEFT JOIN inquiry_items ii
       ON ii.inquiry_id = i.id AND ii.item_need_by_date IS NOT NULL
@@ -301,7 +301,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
       i.id, i.rfq_no, i.customer, i.sales_pic, i.tanggal, i.status,
       MIN(ii.item_need_by_date) AS need_by_date,
       CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
-      CAST(julianday(date(al_sent.sent_at, 'localtime')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
+      CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
     FROM inquiries i
     LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id AND ii.item_need_by_date IS NOT NULL
     LEFT JOIN (
