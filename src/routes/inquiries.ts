@@ -283,6 +283,93 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
   res.json({ rows });
 });
 
+// GET /inquiries/report/export
+inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
+  autoMarkMissedRfqs();
+  autoMarkUnsentRfqs();
+
+  const { month, salesPic, status } = req.query as { month?: string; salesPic?: string; status?: string };
+
+  const params: unknown[] = [];
+  let where = `WHERE 1=1`;
+  if (salesPic) { where += ` AND i.sales_pic = ?`; params.push(salesPic); }
+  if (month)    { where += ` AND strftime('%Y-%m', i.tanggal) = ?`; params.push(month); }
+  if (status)   { where += ` AND i.status = ?`; params.push(status); }
+
+  const summaryRows = db.prepare(`
+    SELECT
+      i.id, i.rfq_no, i.customer, i.sales_pic, i.tanggal, i.status,
+      MIN(ii.item_need_by_date) AS need_by_date,
+      CAST(julianday(MIN(ii.item_need_by_date)) - julianday(i.tanggal) AS INTEGER) AS timeline_days,
+      CAST(julianday(al_sent.sent_at) - julianday(i.tanggal) AS INTEGER) AS days_taken
+    FROM inquiries i
+    LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id AND ii.item_need_by_date IS NOT NULL
+    LEFT JOIN (
+      SELECT inquiry_id, MIN(created_at) AS sent_at FROM activity_log
+      WHERE action LIKE 'Quotation sent%' GROUP BY inquiry_id
+    ) al_sent ON al_sent.inquiry_id = i.id
+    ${where}
+    GROUP BY i.id ORDER BY i.tanggal DESC
+  `).all(...params) as Array<Record<string, unknown>>;
+
+  const ids = summaryRows.map((r) => r['id'] as string);
+  const itemRows = ids.length > 0
+    ? db.prepare(`
+        SELECT i.rfq_no, i.customer, i.sales_pic,
+          ii.item_name, ii.item_quantity, ii.item_uom, ii.item_need_by_date,
+          ii.supplier, ii.harga_beli, ii.harga_jual, ii.margin,
+          ii.lead_time, ii.moq, ii.stock_availability, ii.ppn_type
+        FROM inquiry_items ii
+        JOIN inquiries i ON i.id = ii.inquiry_id
+        WHERE ii.inquiry_id IN (${ids.map(() => '?').join(',')})
+        ORDER BY i.tanggal DESC, ii.coupa_row_index ASC, ii.id ASC
+      `).all(...ids) as Array<Record<string, unknown>>
+    : [];
+
+  const statusLabels: Record<string, string> = {
+    new_inquiry: 'New Inquiry', rfq: 'RFQ to Sourcing',
+    price_approval: 'Price Approval', price_approved: 'Price Approved',
+    quotation_sent: 'Quotation Sent', follow_up: 'Negotiation',
+    ready_to_purchase: 'Ready to Purchase', missed: 'Missed', unsent: 'Unsent',
+  };
+
+  // Sheet 1: Summary
+  const summaryData = [
+    ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Need By Date', 'Timeline (days)', 'Days Taken', 'Status'],
+    ...summaryRows.map((r) => [
+      r['rfq_no'], r['customer'], r['sales_pic'],
+      r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
+      r['need_by_date'] ? String(r['need_by_date']).slice(0, 10) : '',
+      r['timeline_days'] ?? '',
+      r['days_taken'] ?? '',
+      statusLabels[String(r['status'] ?? '')] ?? r['status'],
+    ]),
+  ];
+
+  // Sheet 2: Items
+  const itemsData = [
+    ['RFQ No', 'Customer', 'Sales PIC', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'],
+    ...itemRows.map((r) => [
+      r['rfq_no'], r['customer'], r['sales_pic'],
+      r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
+      r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
+      r['supplier'] ?? '', r['harga_beli'] ?? '', r['harga_jual'] ?? '',
+      r['margin'] ?? '', r['lead_time'] ?? '', r['moq'] ?? '',
+      r['stock_availability'] ?? '', r['ppn_type'] ?? '',
+    ]),
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), 'Summary');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(itemsData), 'Items');
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+  const filename = `report${month ? '-' + month : ''}.xlsx`;
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buf);
+});
+
 // GET /inquiries
 // GET /inquiries/:id
 inquiriesRouter.get('/:id([^/]{1,})', (req: Request, res: Response) => {
