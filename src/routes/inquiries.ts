@@ -229,7 +229,7 @@ function recalcInquiryStatus(inquiryId: string, doneBy: string, doneByName: stri
 function autoMarkMissedRfqs(): void {
   db.prepare(`
     UPDATE inquiries
-    SET sourcing_missed = 1
+    SET sourcing_missed = 1, status = 'missed', updated_at = datetime('now')
     WHERE sourcing_missed = 0
       AND status = 'rfq'
       AND deadline_quotation IS NOT NULL
@@ -244,9 +244,24 @@ function autoMarkMissedRfqs(): void {
   `).run();
 }
 
+function autoMarkUnsentRfqs(): void {
+  db.prepare(`
+    UPDATE inquiries
+    SET status = 'unsent', updated_at = datetime('now')
+    WHERE status = 'price_approved'
+      AND EXISTS (
+        SELECT 1 FROM inquiry_items
+        WHERE inquiry_id = inquiries.id
+          AND item_need_by_date IS NOT NULL
+          AND date(item_need_by_date) < date('now')
+      )
+  `).run();
+}
+
 // GET /inquiries
 inquiriesRouter.get('/', (_req: Request, res: Response) => {
   autoMarkMissedRfqs();
+  autoMarkUnsentRfqs();
   const rows = db.prepare('SELECT * FROM inquiries ORDER BY created_at DESC').all() as Array<Record<string, unknown>>;
   const items = db.prepare('SELECT * FROM inquiry_items ORDER BY coupa_row_index ASC, id ASC').all() as Array<Record<string, unknown>>;
   const logs = db.prepare('SELECT * FROM activity_log ORDER BY created_at ASC').all() as Array<Record<string, unknown>>;
@@ -303,9 +318,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   const thisMonthSales = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND created_at >= ?').get(name, startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status IN ('quotation_sent','ready_to_purchase')`).get(name) as { c: number }).c;
   const unsent = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiries
-     WHERE sales_pic = ? AND status = 'price_approved'
-       AND EXISTS (SELECT 1 FROM inquiry_items WHERE inquiry_id = inquiries.id AND item_need_by_date IS NOT NULL AND item_need_by_date < date('now'))`
+    `SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'unsent'`
   ).get(name) as { c: number }).c;
   const active = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status NOT IN ('quotation_sent','ready_to_purchase')`).get(name) as { c: number }).c;
   const conversionRate = total > 0 ? +((quotationSent / total) * 100).toFixed(1) : 0;
@@ -364,6 +377,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
 // GET /inquiries/dashboard
 inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   autoMarkMissedRfqs();
+  autoMarkUnsentRfqs();
   const startOfMonth = new Date();
   startOfMonth.setDate(1);
   startOfMonth.setHours(0, 0, 0, 0);
@@ -374,8 +388,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','ready_to_purchase')`).get() as { c: number }).c;
   const unsent = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiries WHERE status = 'price_approved'
-       AND EXISTS (SELECT 1 FROM inquiry_items WHERE inquiry_id = inquiries.id AND item_need_by_date IS NOT NULL AND item_need_by_date < date('now'))`
+    `SELECT COUNT(*) as c FROM inquiries WHERE status = 'unsent'`
   ).get() as { c: number }).c;
   const conversionRate = total > 0 ? +((quotationSent / total) * 100).toFixed(1) : 0;
 
