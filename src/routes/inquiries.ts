@@ -284,6 +284,23 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
 });
 
 // GET /inquiries
+// GET /inquiries/:id
+inquiriesRouter.get('/:id([^/]{1,})', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const row = db.prepare('SELECT * FROM inquiries WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  if (!row) { res.status(404).json({ error: 'Not found.' }); return; }
+
+  const items = db.prepare('SELECT * FROM inquiry_items WHERE inquiry_id = ? ORDER BY coupa_row_index ASC, id ASC').all(id) as Array<Record<string, unknown>>;
+  const logs = (db.prepare('SELECT * FROM activity_log WHERE inquiry_id = ? ORDER BY created_at ASC').all(id) as Array<Record<string, unknown>>)
+    .map((l) => ({
+      id: l['id'], inquiryId: l['inquiry_id'], action: l['action'],
+      oldStatus: l['old_status'], newStatus: l['new_status'], note: l['note'],
+      doneBy: l['done_by'], doneByName: l['done_by_name'], createdAt: l['created_at'],
+    }));
+
+  res.json({ ...mapInquiry(row, items), activityLog: logs });
+});
+
 inquiriesRouter.get('/', (_req: Request, res: Response) => {
   autoMarkMissedRfqs();
   autoMarkUnsentRfqs();
