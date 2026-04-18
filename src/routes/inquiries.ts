@@ -250,6 +250,98 @@ function autoMarkUnsentRfqs(): void {
   `).run();
 }
 
+// GET /inquiries/report
+inquiriesRouter.get('/report', (req: Request, res: Response) => {
+  autoMarkMissedRfqs();
+  autoMarkUnsentRfqs();
+
+  const { month, salesPic } = req.query as { month?: string; salesPic?: string };
+
+  const months = (db.prepare(
+    `SELECT DISTINCT strftime('%Y-%m', created_at) as m FROM inquiries ORDER BY m DESC LIMIT 24`
+  ).all() as Array<{ m: string }>).map((r) => r.m);
+
+  const salesPics = (db.prepare(
+    `SELECT DISTINCT sales_pic FROM inquiries ORDER BY sales_pic ASC`
+  ).all() as Array<{ sales_pic: string }>).map((r) => r.sales_pic);
+
+  // ── Unsent RFQs ──────────────────────────────────────────────────────────
+  const unsentParams: unknown[] = [];
+  let unsentWhere = `WHERE i.status = 'unsent'`;
+  if (salesPic) { unsentWhere += ` AND i.sales_pic = ?`; unsentParams.push(salesPic); }
+
+  const unsent = db.prepare(`
+    SELECT i.id, i.rfq_no, i.customer, i.sales_pic,
+      MIN(ii.item_need_by_date) as need_by_date,
+      CAST(julianday('now') - julianday(MIN(ii.item_need_by_date)) AS INTEGER) as days_overdue,
+      CAST(julianday('now') - julianday(al_pa.pa_at) AS INTEGER) as days_in_price_approved
+    FROM inquiries i
+    LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id AND ii.item_need_by_date IS NOT NULL
+    LEFT JOIN (
+      SELECT inquiry_id, MAX(created_at) as pa_at FROM activity_log
+      WHERE new_status = 'price_approved' GROUP BY inquiry_id
+    ) al_pa ON al_pa.inquiry_id = i.id
+    ${unsentWhere}
+    GROUP BY i.id
+    ORDER BY days_overdue DESC
+  `).all(...unsentParams) as Array<Record<string, unknown>>;
+
+  // ── Conversion per user ───────────────────────────────────────────────────
+  const convParams: unknown[] = [];
+  let convWhere = `WHERE 1=1`;
+  if (salesPic) { convWhere += ` AND sales_pic = ?`; convParams.push(salesPic); }
+  if (month)    { convWhere += ` AND strftime('%Y-%m', created_at) = ?`; convParams.push(month); }
+
+  const convRows = db.prepare(`
+    SELECT sales_pic,
+      COUNT(*) as total,
+      SUM(CASE WHEN status IN ('quotation_sent','ready_to_purchase') THEN 1 ELSE 0 END) as sent,
+      SUM(CASE WHEN status = 'unsent' THEN 1 ELSE 0 END) as unsent,
+      SUM(CASE WHEN status = 'missed' THEN 1 ELSE 0 END) as missed
+    FROM inquiries ${convWhere}
+    GROUP BY sales_pic ORDER BY total DESC
+  `).all(...convParams) as Array<{ sales_pic: string; total: number; sent: number; unsent: number; missed: number }>;
+
+  const conversionByUser = convRows.map((r) => ({
+    salesPic: r.sales_pic, total: r.total, sent: r.sent, unsent: r.unsent, missed: r.missed,
+    conversionPct: r.total > 0 ? +((r.sent / r.total) * 100).toFixed(1) : 0,
+    unsentRate:    r.total > 0 ? +((r.unsent / r.total) * 100).toFixed(1) : 0,
+  }));
+
+  // ── Response time ─────────────────────────────────────────────────────────
+  const rtParams: unknown[] = [];
+  let rtWhere = `WHERE 1=1`;
+  if (salesPic) { rtWhere += ` AND i.sales_pic = ?`; rtParams.push(salesPic); }
+  if (month)    { rtWhere += ` AND strftime('%Y-%m', i.created_at) = ?`; rtParams.push(month); }
+
+  const responseTime = db.prepare(`
+    SELECT i.sales_pic, COUNT(*) as count,
+      ROUND(AVG(julianday(al_sent.sent_at) - julianday(i.created_at)), 1) as avg_days_total,
+      ROUND(AVG(julianday(al_sent.sent_at) - julianday(al_pa.pa_at)), 1) as avg_days_price_to_sent
+    FROM inquiries i
+    JOIN (SELECT inquiry_id, MIN(created_at) as sent_at FROM activity_log WHERE action LIKE 'Quotation sent%' GROUP BY inquiry_id) al_sent ON al_sent.inquiry_id = i.id
+    LEFT JOIN (SELECT inquiry_id, MAX(created_at) as pa_at FROM activity_log WHERE new_status = 'price_approved' GROUP BY inquiry_id) al_pa ON al_pa.inquiry_id = i.id
+    ${rtWhere} GROUP BY i.sales_pic ORDER BY avg_days_total DESC
+  `).all(...rtParams) as Array<Record<string, unknown>>;
+
+  const slowParams: unknown[] = [];
+  let slowWhere = `WHERE 1=1`;
+  if (salesPic) { slowWhere += ` AND i.sales_pic = ?`; slowParams.push(salesPic); }
+  if (month)    { slowWhere += ` AND strftime('%Y-%m', i.created_at) = ?`; slowParams.push(month); }
+
+  const slowestRfqs = db.prepare(`
+    SELECT i.id, i.rfq_no, i.customer, i.sales_pic, i.status,
+      CAST(julianday(al_sent.sent_at) - julianday(i.created_at) AS INTEGER) as days_total,
+      CAST(julianday(al_sent.sent_at) - julianday(al_pa.pa_at) AS INTEGER) as days_price_to_sent
+    FROM inquiries i
+    JOIN (SELECT inquiry_id, MIN(created_at) as sent_at FROM activity_log WHERE action LIKE 'Quotation sent%' GROUP BY inquiry_id) al_sent ON al_sent.inquiry_id = i.id
+    LEFT JOIN (SELECT inquiry_id, MAX(created_at) as pa_at FROM activity_log WHERE new_status = 'price_approved' GROUP BY inquiry_id) al_pa ON al_pa.inquiry_id = i.id
+    ${slowWhere} ORDER BY days_total DESC LIMIT 10
+  `).all(...slowParams) as Array<Record<string, unknown>>;
+
+  res.json({ unsent, conversionByUser, responseTime, slowestRfqs, months, salesPics });
+});
+
 // GET /inquiries
 inquiriesRouter.get('/', (_req: Request, res: Response) => {
   autoMarkMissedRfqs();
