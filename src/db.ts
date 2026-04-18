@@ -120,6 +120,7 @@ db.exec(`
     review_round INTEGER NOT NULL DEFAULT 0,
     approved_price REAL,
     alternate_name TEXT,
+    ppn_type TEXT,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
   );
 
@@ -226,7 +227,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 18;
+const LATEST_VERSION = 19;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -460,6 +461,14 @@ const migrations: Array<{ version: number; run: () => void }> = [
     run: () => {
       if (!cols('inquiries').includes('price_approval_started_at'))
         db.exec('ALTER TABLE inquiries ADD COLUMN price_approval_started_at TEXT');
+    },
+  },
+  {
+    // Add ppn_type to inquiry_items
+    version: 19,
+    run: () => {
+      if (!cols('inquiry_items').includes('ppn_type'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN ppn_type TEXT');
     },
   },
 ];

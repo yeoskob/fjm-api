@@ -77,6 +77,7 @@ function mapItem(row: Record<string, unknown>) {
     reviewStatus: row['review_status'] === 'rejected' ? 'review' : (row['review_status'] ?? 'pending'),
     reviewRound: Number(row['review_round'] ?? 0),
     sourcingMissed: row['sourcing_missed'] === 1,
+    ppnType: row['ppn_type'] ?? null,
   };
 }
 
@@ -300,16 +301,14 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   // Sales stats
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ?').get(name) as { c: number }).c;
   const thisMonthSales = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND created_at >= ?').get(name, startOfMonthIso) as { c: number }).c;
-  const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status IN ('quotation_sent','deal')`).get(name) as { c: number }).c;
+  const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status IN ('quotation_sent','ready_to_purchase')`).get(name) as { c: number }).c;
   const sentIncomplete = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiries
-     WHERE sales_pic = ? AND status IN ('quotation_sent','deal') AND sent_incomplete = 1`
+     WHERE sales_pic = ? AND status IN ('quotation_sent','ready_to_purchase') AND sent_incomplete = 1`
   ).get(name) as { c: number }).c;
   const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
-  const deals = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'deal'`).get(name) as { c: number }).c;
-  const lost = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'lost'`).get(name) as { c: number }).c;
-  const active = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status NOT IN ('deal','lost')`).get(name) as { c: number }).c;
-  const conversionRate = total > 0 ? +((deals / total) * 100).toFixed(1) : 0;
+  const active = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status NOT IN ('quotation_sent','ready_to_purchase')`).get(name) as { c: number }).c;
+  const conversionRate = total > 0 ? +((quotationSent / total) * 100).toFixed(1) : 0;
   const statusBreakdown = db.prepare(
     'SELECT status, COUNT(*) as count FROM inquiries WHERE sales_pic = ? GROUP BY status ORDER BY count DESC'
   ).all(name) as Array<{ status: string; count: number }>;
@@ -356,7 +355,7 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   ).get(name) as { c: number }).c;
 
   res.json({
-    salesStats: { total, thisMonth: thisMonthSales, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, active, conversionRate, statusBreakdown },
+    salesStats: { total, thisMonth: thisMonthSales, quotationSent, sentIncomplete, sentIncompleteRate, active, conversionRate, statusBreakdown },
     sourcingStats: { itemsSourced, inquiriesContributed, thisMonth: thisMonthSourcing, itemsTerisi: userItemsTerisi, itemsMissed: userItemsMissed, itemsTidakTerisi: userItemsTidakTerisi },
     managerStats: { approvalsTotal, approvalsThisMonth, inquiriesApproved },
   });
@@ -373,18 +372,16 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   // Sales stats
   const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries').get() as { c: number }).c;
   const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonthIso) as { c: number }).c;
-  const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal')`).get() as { c: number }).c;
+  const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','ready_to_purchase')`).get() as { c: number }).c;
   const sentIncomplete = (db.prepare(
-    `SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','deal') AND sent_incomplete = 1`
+    `SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','ready_to_purchase') AND sent_incomplete = 1`
   ).get() as { c: number }).c;
   const sentIncompleteRate = quotationSent > 0 ? +((sentIncomplete / quotationSent) * 100).toFixed(1) : 0;
-  const deals = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'deal'`).get() as { c: number }).c;
-  const lost = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'lost'`).get() as { c: number }).c;
-  const conversionRate = total > 0 ? +((deals / total) * 100).toFixed(1) : 0;
+  const conversionRate = total > 0 ? +((quotationSent / total) * 100).toFixed(1) : 0;
 
   const topSales = db.prepare(
-    `SELECT sales_pic, COUNT(*) as deal_count FROM inquiries WHERE status = 'deal' GROUP BY sales_pic ORDER BY deal_count DESC LIMIT 5`
-  ).all() as Array<{ sales_pic: string; deal_count: number }>;
+    `SELECT sales_pic, COUNT(*) as sent_count FROM inquiries WHERE status IN ('quotation_sent','ready_to_purchase') GROUP BY sales_pic ORDER BY sent_count DESC LIMIT 5`
+  ).all() as Array<{ sales_pic: string; sent_count: number }>;
 
   const topMarketing = db.prepare(
     `SELECT sales_pic, COUNT(*) as sent_count FROM inquiries
@@ -440,7 +437,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; deadline_quotation: string; days_left: number }>;
 
   res.json({
-    total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, deals, lost, conversionRate, topSales, topMarketing, statusBreakdown,
+    total, thisMonth, quotationSent, sentIncomplete, sentIncompleteRate, conversionRate, topSales, topMarketing, statusBreakdown,
     sourcingPending, sourcingItemsThisMonth, sourcingItemsTotal, topSourcers, urgentRfqs, rfqsMissed, rfqsMissedUnassigned,
     itemsTerisi, itemsTidakTerisi, itemsMissed, itemsMissedUnassigned,
   });
@@ -1023,7 +1020,7 @@ inquiriesRouter.post('/:id/sourcing-info', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Inquiry must be in RFQ status.' }); return;
   }
 
-  const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, doneBy, doneByName } =
+  const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, ppnType, doneBy, doneByName } =
     req.body as Record<string, unknown>;
 
   if (!supplier || hargaBeli === undefined || !leadTime) {
@@ -1036,8 +1033,8 @@ inquiriesRouter.post('/:id/sourcing-info', (req: Request, res: Response) => {
 
   db.prepare(
     `UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
-       stock_availability = ?, term_pembayaran = ? WHERE id = ?`
-  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, item.id);
+       stock_availability = ?, term_pembayaran = ?, ppn_type = ? WHERE id = ?`
+  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, ppnType ?? null, item.id);
 
   logActivity(id, 'Sourcing info submitted', 'rfq', 'rfq', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -1057,7 +1054,7 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
   if (!item) { res.status(404).json({ error: 'Item not found.' }); return; }
   if (item.price_approved) { res.status(400).json({ error: 'Item already approved, cannot edit.' }); return; }
 
-  const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, alternateName, doneBy, doneByName } =
+  const { supplier, hargaBeli, leadTime, moq, stockAvailability, termPembayaran, alternateName, ppnType, doneBy, doneByName } =
     req.body as Record<string, unknown>;
 
   if (!supplier || hargaBeli === undefined || !leadTime) {
@@ -1066,8 +1063,8 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
 
   db.prepare(
     `UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
-       stock_availability = ?, term_pembayaran = ?, alternate_name = ? WHERE id = ?`
-  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, itemId);
+       stock_availability = ?, term_pembayaran = ?, alternate_name = ?, ppn_type = ? WHERE id = ?`
+  ).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, ppnType ?? null, itemId);
 
   logActivity(id, 'Sourcing info submitted', 'rfq', 'rfq', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -1106,12 +1103,6 @@ inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) =>
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
   if (inquiry.status !== 'price_approval') {
     res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
-  }
-
-  const items = db.prepare('SELECT price_approved, harga_beli FROM inquiry_items WHERE inquiry_id = ?').all(id) as Array<{ price_approved: number; harga_beli: number | null }>;
-  const hasUnsourced = items.some((i) => !i.price_approved && !i.harga_beli);
-  if (!hasUnsourced) {
-    res.status(400).json({ error: 'No unfilled items to return to sourcing.' }); return;
   }
 
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
@@ -1399,47 +1390,23 @@ inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) 
   res.json({ ok: true });
 });
 
-// POST /inquiries/:id/close — Sales or Manager closes as deal/lost
-inquiriesRouter.post('/:id/close', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
-
-  if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-
-  const closeableStatuses = ['new_inquiry', 'rfq', 'quotation_sent'];
-  if (!closeableStatuses.includes(inquiry.status)) {
-    res.status(400).json({ error: 'Cannot close inquiry at this stage.' }); return;
-  }
-
-  const { outcome, doneBy, doneByName, note } = req.body as Record<string, unknown>;
-  if (!['deal', 'lost'].includes(String(outcome))) {
-    res.status(400).json({ error: 'outcome must be deal or lost.' }); return;
-  }
-
-  const oldStatus = inquiry.status;
-  db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run(outcome, new Date().toISOString(), doneBy, id);
-
-  logActivity(id, `Closed as ${String(outcome)}`, oldStatus, String(outcome), String(note ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
-  res.json({ ok: true });
-});
-
-// POST /inquiries/:id/ready-to-purchase — move a deal to ready_to_purchase
+// POST /inquiries/:id/ready-to-purchase — move a quotation_sent inquiry to ready_to_purchase
 inquiriesRouter.post('/:id/ready-to-purchase', (req: Request, res: Response) => {
   const { id } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
 
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'deal') {
-    res.status(400).json({ error: 'Only deal inquiries can be moved to Ready to Purchase.' }); return;
+  if (!['quotation_sent', 'follow_up'].includes(inquiry.status)) {
+    res.status(400).json({ error: 'Only quotation_sent or follow_up inquiries can be moved to Ready to Purchase.' }); return;
   }
 
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
+  const oldStatus = inquiry.status;
 
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ? WHERE id = ?')
     .run('ready_to_purchase', new Date().toISOString(), doneBy, id);
 
-  logActivity(id, 'Moved to Ready to Purchase', 'deal', 'ready_to_purchase', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  logActivity(id, 'Moved to Ready to Purchase', oldStatus, 'ready_to_purchase', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
 });
 
