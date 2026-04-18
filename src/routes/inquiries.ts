@@ -407,9 +407,9 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ status: string; count: number }>;
 
   // RFQ-level sourcing breakdown
-  const rfqsMissed = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq' AND sourcing_missed = 1`).get() as { c: number }).c;
-  const rfqsMissedUnassigned = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'rfq' AND sourcing_missed = 1 AND (sourcing_pic IS NULL OR sourcing_pic = '')`).get() as { c: number }).c;
-  const itemsMissedUnassigned = (db.prepare(`SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id IN (SELECT id FROM inquiries WHERE sourcing_missed = 1 AND (sourcing_pic IS NULL OR sourcing_pic = ''))`).get() as { c: number }).c;
+  const rfqsMissed = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'missed'`).get() as { c: number }).c;
+  const rfqsMissedUnassigned = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status = 'missed' AND (sourcing_pic IS NULL OR sourcing_pic = '')`).get() as { c: number }).c;
+  const itemsMissedUnassigned = (db.prepare(`SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id IN (SELECT id FROM inquiries WHERE status = 'missed' AND (sourcing_pic IS NULL OR sourcing_pic = ''))`).get() as { c: number }).c;
 
   // Item state breakdown — scoped to non-missed RFQs only
   const itemsTerisi = (db.prepare(
