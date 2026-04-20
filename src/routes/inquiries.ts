@@ -1705,13 +1705,28 @@ inquiriesRouter.patch('/:id/assign-sales', (req: Request, res: Response) => {
     res.status(400).json({ error: 'salesPic is required.' }); return;
   }
 
-  const inquiry = db.prepare('SELECT id FROM inquiries WHERE id = ?').get(id);
+  const inquiry = db.prepare('SELECT id, rfq_no, sales_pic FROM inquiries WHERE id = ?')
+    .get(id) as { id: string; rfq_no: string | null; sales_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
 
+  const newPic = String(salesPic).trim();
   db.prepare('UPDATE inquiries SET sales_pic = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run(String(salesPic).trim(), new Date().toISOString(), doneBy, id);
+    .run(newPic, new Date().toISOString(), doneBy, id);
 
-  logActivity(id, `Sales PIC reassigned to: ${String(salesPic)}`, null, null, '', String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  logActivity(id, `Sales PIC reassigned to: ${newPic}`, null, null, '', String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+
+  if (newPic !== (inquiry.sales_pic ?? '')) {
+    const recipient = usernameForPic(newPic);
+    if (recipient && recipient !== String(doneBy ?? '')) {
+      insertAndBroadcast(
+        'assigned_sales', id, inquiry.rfq_no ?? null,
+        `${inquiry.rfq_no ?? 'RFQ'} assigned to you by ${String(doneByName ?? doneBy)}`,
+        String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''),
+        recipient,
+      );
+    }
+  }
+
   res.json({ ok: true });
 });
 
@@ -1721,7 +1736,8 @@ inquiriesRouter.patch('/:id/assign-sourcing', (req: Request, res: Response) => {
   const { id } = req.params;
   const { sourcingPic, doneBy, doneByName, role } = req.body as Record<string, unknown>;
 
-  const inquiry = db.prepare('SELECT id, sourcing_pic FROM inquiries WHERE id = ?').get(id) as { id: string; sourcing_pic: string | null } | undefined;
+  const inquiry = db.prepare('SELECT id, rfq_no, sourcing_pic FROM inquiries WHERE id = ?')
+    .get(id) as { id: string; rfq_no: string | null; sourcing_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
 
   const isSourcing = role === 'sourcing';
@@ -1741,10 +1757,25 @@ inquiriesRouter.patch('/:id/assign-sourcing', (req: Request, res: Response) => {
     }
   }
 
+  const newPic = sourcingPic ? String(sourcingPic).trim() : null;
   db.prepare('UPDATE inquiries SET sourcing_pic = ?, updated_at = ?, updated_by = ? WHERE id = ?')
-    .run(sourcingPic ?? null, new Date().toISOString(), doneBy, id);
+    .run(newPic, new Date().toISOString(), doneBy, id);
 
   logActivity(id, `Sourcing assigned: ${String(sourcingPic ?? 'unassigned')}`, null, null, '', String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+
+  // Notify the newly-assigned sourcing user (skip self-assignment and unassignment)
+  if (newPic && newPic !== (inquiry.sourcing_pic ?? '') && newPic !== String(doneByName ?? '')) {
+    const recipient = usernameForPic(newPic);
+    if (recipient) {
+      insertAndBroadcast(
+        'assigned_sourcing', id, inquiry.rfq_no ?? null,
+        `${inquiry.rfq_no ?? 'RFQ'} assigned to you by ${String(doneByName ?? doneBy)}`,
+        String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''),
+        recipient,
+      );
+    }
+  }
+
   res.json({ ok: true });
 });
 

@@ -19,7 +19,9 @@ export type NotificationType =
   | 'price_approval'
   | 'price_review'
   | 'price_approved'
-  | 'return_to_sourcing';
+  | 'return_to_sourcing'
+  | 'assigned_sales'
+  | 'assigned_sourcing';
 
 export interface NotificationRecord {
   id: string;
