@@ -66,9 +66,16 @@ export function insertAndBroadcast(
   }
 }
 
+/** Resolve a PIC field (which historically stores display name) to a username. */
+export function usernameForPic(pic: string | null | undefined): string | null {
+  if (!pic) return null;
+  const row = db.prepare('SELECT username FROM users WHERE name = ? OR username = ?').get(pic, pic) as { username: string } | undefined;
+  return row?.username ?? null;
+}
+
 // ── REST endpoints ───────────────────────────────────────────────────────────
 
-// GET /notifications — unread notifications visible to the current user
+// GET /notifications — unread notifications visible to the current user.
 notificationsRouter.get('/', (req: Request, res: Response) => {
   const user = (req as any).user as { username: string; role: string };
   const rows = db.prepare(

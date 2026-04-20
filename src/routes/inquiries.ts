@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../db';
 import { generateId } from '../utils/id';
 import * as XLSX from 'xlsx';
-import { insertAndBroadcast } from './notifications';
+import { insertAndBroadcast, usernameForPic } from './notifications';
 
 export const inquiriesRouter = Router();
 
@@ -1285,12 +1285,13 @@ inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) =>
     .run('rfq', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
 
-  if (inquiry.sourcing_pic) {
+  const sourcingRecipient = usernameForPic(inquiry.sourcing_pic);
+  if (sourcingRecipient) {
     insertAndBroadcast(
       'return_to_sourcing', id, inquiry.rfq_no ?? null,
       `${inquiry.rfq_no ?? 'RFQ'} returned to Sourcing by ${String(doneByName ?? doneBy)}`,
       String(doneBy), String(doneByName ?? doneBy),
-      inquiry.sourcing_pic,
+      sourcingRecipient,
     );
   }
   res.json({ ok: true });
@@ -1444,12 +1445,13 @@ inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response
     .run('price_approved', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
 
-  if (inquiry.sales_pic) {
+  const salesRecipient = usernameForPic(inquiry.sales_pic);
+  if (salesRecipient) {
     insertAndBroadcast(
       'price_approved', id, inquiry.rfq_no ?? null,
       `${inquiry.rfq_no ?? 'RFQ'} is Price Approved — ready to send quotation`,
       String(doneBy), String(doneByName ?? doneBy),
-      inquiry.sales_pic,
+      salesRecipient,
     );
   }
   res.json({ ok: true });
