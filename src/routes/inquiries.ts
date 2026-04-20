@@ -1365,7 +1365,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     approved_price: number | null;
   }>;
 
-  const itemsNeedingReview = items.filter((item) =>
+  const filteredItems = items.filter((item) =>
     item.price_approved !== 1 ||
     item.harga_jual == null ||
     item.review_status === 'review' ||
@@ -1373,8 +1373,11 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
     (item.harga_jual != null && item.approved_price != null && item.harga_jual < item.approved_price)
   );
 
+  // If nothing matches the automatic filter, send every item back for review.
+  const itemsNeedingReview = filteredItems.length ? filteredItems : items;
+
   if (!itemsNeedingReview.length) {
-    res.status(400).json({ error: 'No item needs price review.' }); return;
+    res.status(400).json({ error: 'Inquiry has no items.' }); return;
   }
 
   const reopeningReviewCount = itemsNeedingReview.filter((item) => item.review_status === 'review').length;
