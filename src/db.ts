@@ -564,6 +564,16 @@ const ensureOrganizationsTable = () => {
 
 ensureOrganizationsTable();
 
+const ensureNotificationsColumns = () => {
+  const c = cols('notifications');
+  if (!c.includes('recipient_username')) {
+    db.exec('ALTER TABLE notifications ADD COLUMN recipient_username TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications (recipient_username)');
+};
+
+ensureNotificationsColumns();
+
 // ─── Seed data ────────────────────────────────────────────────────────────────
 
 const ensureDefaultRoles = () => {
