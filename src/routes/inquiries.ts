@@ -283,6 +283,34 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
   res.json({ rows });
 });
 
+// GET /inquiries/report/sourcing
+inquiriesRouter.get('/report/sourcing', (req: Request, res: Response) => {
+  autoMarkMissedRfqs();
+  autoMarkUnsentRfqs();
+
+  const { month, sourcingPic } = req.query as { month?: string; sourcingPic?: string };
+
+  const params: unknown[] = [];
+  let where = `WHERE 1=1`;
+  if (sourcingPic) { where += ` AND i.sourcing_pic = ?`; params.push(sourcingPic); }
+  if (month)       { where += ` AND strftime('%Y-%m', i.tanggal) = ?`; params.push(month); }
+
+  const rows = db.prepare(`
+    SELECT
+      i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
+      MIN(ii.item_need_by_date) AS need_by_date,
+      COUNT(ii.id) AS total_items,
+      SUM(CASE WHEN COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != '' THEN 1 ELSE 0 END) AS sourced_items
+    FROM inquiries i
+    LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id
+    ${where}
+    GROUP BY i.id
+    ORDER BY i.tanggal DESC
+  `).all(...params) as Array<Record<string, unknown>>;
+
+  res.json({ rows });
+});
+
 // GET /inquiries/report/export
 inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   autoMarkMissedRfqs();
