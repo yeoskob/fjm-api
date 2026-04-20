@@ -478,6 +478,16 @@ const migrations: Array<{ version: number; run: () => void }> = [
       db.exec(`UPDATE inquiries SET status = 'missed' WHERE status = 'rfq' AND sourcing_missed = 1`);
     },
   },
+  {
+    // Add recipient_username to notifications for per-user targeting
+    version: 21,
+    run: () => {
+      if (!cols('notifications').includes('recipient_username')) {
+        db.exec('ALTER TABLE notifications ADD COLUMN recipient_username TEXT');
+      }
+      db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications (recipient_username)');
+    },
+  },
 ];
 
 const runMigrations = () => {

@@ -4,11 +4,22 @@ import { generateId } from '../utils/id';
 
 export const notificationsRouter = Router();
 
-// ── In-memory SSE client registry ─────────────────────────────────────────────
+// ── SSE client registry ──────────────────────────────────────────────────────
 
-const sseClients = new Set<Response>();
+interface SseClient {
+  res: Response;
+  username: string;
+  role: string;
+}
+const sseClients = new Set<SseClient>();
 
-// ── Shared helper called from other routers ────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export type NotificationType =
+  | 'price_approval'
+  | 'price_review'
+  | 'price_approved'
+  | 'return_to_sourcing';
 
 export interface NotificationRecord {
   id: string;
@@ -20,50 +31,70 @@ export interface NotificationRecord {
   triggered_by_name: string;
   created_at: string;
   read_at: string | null;
+  recipient_username: string | null;
 }
 
+// ── Shared helper called from other routers ──────────────────────────────────
+
 export function insertAndBroadcast(
-  type: 'price_approval' | 'price_review',
+  type: NotificationType,
   inquiryId: string,
   rfqNo: string | null,
   message: string,
   triggeredBy: string,
   triggeredByName: string,
+  recipientUsername: string | null = null,
 ): void {
   const id = generateId();
   const createdAt = new Date().toISOString();
 
   db.prepare(
-    `INSERT INTO notifications (id, type, inquiry_id, rfq_no, message, triggered_by, triggered_by_name, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, type, inquiryId, rfqNo ?? null, message, triggeredBy, triggeredByName, createdAt);
+    `INSERT INTO notifications (id, type, inquiry_id, rfq_no, message, triggered_by, triggered_by_name, created_at, recipient_username)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, type, inquiryId, rfqNo ?? null, message, triggeredBy, triggeredByName, createdAt, recipientUsername ?? null);
 
   const notif: NotificationRecord = {
     id, type, inquiry_id: inquiryId, rfq_no: rfqNo ?? null, message,
     triggered_by: triggeredBy, triggered_by_name: triggeredByName,
-    created_at: createdAt, read_at: null,
+    created_at: createdAt, read_at: null, recipient_username: recipientUsername ?? null,
   };
 
   const payload = `data: ${JSON.stringify(notif)}\n\n`;
   for (const client of sseClients) {
-    client.write(payload);
+    if (recipientUsername && client.username !== recipientUsername) continue;
+    client.res.write(payload);
   }
 }
 
-// ── REST endpoints ─────────────────────────────────────────────────────────────
+// ── REST endpoints ───────────────────────────────────────────────────────────
 
-// GET /notifications — all unread, newest first
-notificationsRouter.get('/', (_req: Request, res: Response) => {
+// GET /notifications — unread notifications visible to the current user
+notificationsRouter.get('/', (req: Request, res: Response) => {
+  const user = (req as any).user as { username: string; role: string };
   const rows = db.prepare(
-    `SELECT * FROM notifications WHERE read_at IS NULL ORDER BY created_at DESC`
-  ).all() as NotificationRecord[];
+    `SELECT * FROM notifications
+     WHERE read_at IS NULL
+       AND (recipient_username IS NULL OR recipient_username = ?)
+     ORDER BY created_at DESC`
+  ).all(user.username) as NotificationRecord[];
   res.json(rows);
 });
 
-// POST /notifications/read-all — mark every unread notification as read
-notificationsRouter.post('/read-all', (_req: Request, res: Response) => {
-  db.prepare(`UPDATE notifications SET read_at = ? WHERE read_at IS NULL`)
-    .run(new Date().toISOString());
+// POST /notifications/read-all — mark every unread notification visible to
+// the current user as read (broadcasts stay for others, targeted-to-me get cleared)
+notificationsRouter.post('/read-all', (req: Request, res: Response) => {
+  const user = (req as any).user as { username: string; role: string };
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE notifications SET read_at = ?
+     WHERE read_at IS NULL AND recipient_username = ?`
+  ).run(now, user.username);
+  // Broadcast rows (recipient NULL) we mark read for everyone — that matches
+  // the prior behaviour where "mark all read" cleared the queue globally.
+  db.prepare(
+    `UPDATE notifications SET read_at = ?
+     WHERE read_at IS NULL AND recipient_username IS NULL`
+  ).run(now);
   res.json({ ok: true });
 });
 
@@ -75,24 +106,23 @@ notificationsRouter.post('/:id/read', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// GET /notifications/stream — SSE endpoint (token passed as ?token= because
-// the browser EventSource API cannot set custom headers; requireAuth accepts it)
+// GET /notifications/stream — SSE endpoint
 notificationsRouter.get('/stream', (req: Request, res: Response) => {
+  const user = (req as any).user as { username: string; role: string };
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-
-  // Immediate acknowledgement so the client knows the connection is live
   res.write(':connected\n\n');
 
-  sseClients.add(res);
+  const client: SseClient = { res, username: user.username, role: user.role };
+  sseClients.add(client);
 
-  // Keep-alive ping every 25 s (proxies typically close idle connections at 30 s)
   const heartbeat = setInterval(() => res.write(':heartbeat\n\n'), 25_000);
 
   req.on('close', () => {
     clearInterval(heartbeat);
-    sseClients.delete(res);
+    sseClients.delete(client);
   });
 });

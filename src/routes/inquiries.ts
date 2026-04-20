@@ -1272,7 +1272,7 @@ inquiriesRouter.post('/:id/send-to-price-approval', (req: Request, res: Response
 // POST /inquiries/:id/return-to-sourcing — Pricelist sends unfilled items back to sourcing
 inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) => {
   const { id } = req.params;
-  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  const inquiry = db.prepare('SELECT id, status, rfq_no, sourcing_pic FROM inquiries WHERE id = ?').get(id) as { id: string; status: string; rfq_no: string | null; sourcing_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
   if (inquiry.status !== 'price_approval') {
     res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
@@ -1284,6 +1284,15 @@ inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) =>
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
     .run('rfq', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
+
+  if (inquiry.sourcing_pic) {
+    insertAndBroadcast(
+      'return_to_sourcing', id, inquiry.rfq_no ?? null,
+      `${inquiry.rfq_no ?? 'RFQ'} returned to Sourcing by ${String(doneByName ?? doneBy)}`,
+      String(doneBy), String(doneByName ?? doneBy),
+      inquiry.sourcing_pic,
+    );
+  }
   res.json({ ok: true });
 });
 
@@ -1422,7 +1431,7 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
 // POST /inquiries/:id/send-to-price-approved — Manager manually submits to Price Approved
 inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response) => {
   const { id } = req.params;
-  const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+  const inquiry = db.prepare('SELECT id, status, rfq_no, sales_pic FROM inquiries WHERE id = ?').get(id) as { id: string; status: string; rfq_no: string | null; sales_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
   if (inquiry.status !== 'price_approval') {
     res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
@@ -1434,6 +1443,15 @@ inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
     .run('price_approved', new Date().toISOString(), String(doneBy), id);
   logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
+
+  if (inquiry.sales_pic) {
+    insertAndBroadcast(
+      'price_approved', id, inquiry.rfq_no ?? null,
+      `${inquiry.rfq_no ?? 'RFQ'} is Price Approved — ready to send quotation`,
+      String(doneBy), String(doneByName ?? doneBy),
+      inquiry.sales_pic,
+    );
+  }
   res.json({ ok: true });
 });
 
