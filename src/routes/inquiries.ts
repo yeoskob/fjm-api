@@ -316,7 +316,10 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   autoMarkMissedRfqs();
   autoMarkUnsentRfqs();
 
-  const { month, salesPic, status, search } = req.query as { month?: string; salesPic?: string; status?: string; search?: string };
+  const { month, salesPic, status, search, dateField, dateFrom, dateTo } = req.query as {
+    month?: string; salesPic?: string; status?: string; search?: string;
+    dateField?: string; dateFrom?: string; dateTo?: string;
+  };
 
   const params: unknown[] = [];
   let where = `WHERE 1=1`;
@@ -325,8 +328,15 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   if (status)   { where += ` AND i.status = ?`; params.push(status); }
   if (search && String(search).trim()) {
     const like = `%${String(search).trim()}%`;
-    where += ` AND (i.rfq_no LIKE ? OR i.customer LIKE ? OR i.sales_pic LIKE ? OR i.status LIKE ?)`;
-    params.push(like, like, like, like);
+    where += ` AND (i.rfq_no LIKE ? OR i.customer LIKE ?)`;
+    params.push(like, like);
+  }
+  if (dateFrom || dateTo) {
+    const dateExpr = dateField === 'need_by_date'
+      ? `(SELECT MIN(item_need_by_date) FROM inquiry_items WHERE inquiry_id = i.id)`
+      : `date(i.tanggal)`;
+    if (dateFrom) { where += ` AND ${dateExpr} >= ?`; params.push(String(dateFrom)); }
+    if (dateTo)   { where += ` AND ${dateExpr} <= ?`; params.push(String(dateTo)); }
   }
 
   const summaryRows = db.prepare(`
@@ -348,7 +358,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   const ids = summaryRows.map((r) => r['id'] as string);
   const itemRows = ids.length > 0
     ? db.prepare(`
-        SELECT i.rfq_no, i.customer, i.sales_pic,
+        SELECT i.rfq_no, i.customer, i.sales_pic, i.tanggal,
           ii.item_name, ii.item_quantity, ii.item_uom, ii.item_need_by_date,
           ii.supplier, ii.harga_beli, ii.harga_jual, ii.margin,
           ii.lead_time, ii.moq, ii.stock_availability, ii.ppn_type
@@ -366,8 +376,22 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
     ready_to_purchase: 'Ready to Purchase', missed: 'Missed', unsent: 'Unsent',
   };
 
+  const dateFieldLabel = dateField === 'need_by_date' ? 'Need By Date' : 'Inquiry Date';
+  const dateRangeStr = dateFrom || dateTo
+    ? `${dateFieldLabel}: ${dateFrom || '…'} to ${dateTo || '…'}`
+    : '';
+  const metadata: unknown[][] = [
+    [`Exported: ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`],
+  ];
+  if (month)     metadata.push([`Month: ${month}`]);
+  if (salesPic)  metadata.push([`Sales PIC: ${salesPic}`]);
+  if (status)    metadata.push([`Status: ${statusLabels[String(status)] ?? status}`]);
+  if (dateRangeStr) metadata.push([dateRangeStr]);
+  metadata.push([]);
+
   // Sheet 1: Summary
   const summaryData = [
+    ...metadata,
     ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Need By Date', 'Timeline (days)', 'Days Taken', 'Status'],
     ...summaryRows.map((r) => [
       r['rfq_no'], r['customer'], r['sales_pic'],
@@ -381,9 +405,11 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
 
   // Sheet 2: Items
   const itemsData = [
-    ['RFQ No', 'Customer', 'Sales PIC', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'],
+    ...metadata,
+    ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'],
     ...itemRows.map((r) => [
       r['rfq_no'], r['customer'], r['sales_pic'],
+      r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
       r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
       r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
       r['supplier'] ?? '', r['harga_beli'] ?? '', r['harga_jual'] ?? '',
