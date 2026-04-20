@@ -316,13 +316,18 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   autoMarkMissedRfqs();
   autoMarkUnsentRfqs();
 
-  const { month, salesPic, status } = req.query as { month?: string; salesPic?: string; status?: string };
+  const { month, salesPic, status, search } = req.query as { month?: string; salesPic?: string; status?: string; search?: string };
 
   const params: unknown[] = [];
   let where = `WHERE 1=1`;
   if (salesPic) { where += ` AND i.sales_pic = ?`; params.push(salesPic); }
   if (month)    { where += ` AND strftime('%Y-%m', i.tanggal) = ?`; params.push(month); }
   if (status)   { where += ` AND i.status = ?`; params.push(status); }
+  if (search && String(search).trim()) {
+    const like = `%${String(search).trim()}%`;
+    where += ` AND (i.rfq_no LIKE ? OR i.customer LIKE ? OR i.sales_pic LIKE ? OR i.status LIKE ?)`;
+    params.push(like, like, like, like);
+  }
 
   const summaryRows = db.prepare(`
     SELECT
