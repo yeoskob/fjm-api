@@ -476,22 +476,27 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
     `SELECT COUNT(*) as c FROM activity_log WHERE done_by_name = ? AND action = 'Sourcing info submitted' AND created_at >= ?`
   ).get(name, startOfMonthIso) as { c: number }).c;
 
-  // Per-user item state breakdown — scoped to RFQs assigned to this sourcing user
+  // Per-user item state breakdown — scoped to RFQs this sourcing user has contributed to
+  // (matches inquiriesContributed, which is also based on activity_log)
+  const contributedInquiriesClause = `ii.inquiry_id IN (
+    SELECT DISTINCT inquiry_id FROM activity_log
+    WHERE done_by_name = ? AND action = 'Sourcing info submitted'
+  )`;
   const userItemsTerisi = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
-     WHERE i.sourcing_pic = ? AND i.sourcing_missed = 0
+     WHERE ${contributedInquiriesClause} AND i.sourcing_missed = 0
        AND COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != ''`
   ).get(name) as { c: number }).c;
   const userItemsMissed = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
-     WHERE i.sourcing_pic = ? AND i.sourcing_missed = 1`
+     WHERE ${contributedInquiriesClause} AND i.sourcing_missed = 1`
   ).get(name) as { c: number }).c;
   const userItemsTidakTerisi = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiry_items ii
      JOIN inquiries i ON i.id = ii.inquiry_id
-     WHERE i.sourcing_pic = ? AND i.sourcing_missed = 0
+     WHERE ${contributedInquiriesClause} AND i.sourcing_missed = 0
        AND (COALESCE(ii.supplier,'') = '' OR ii.harga_beli IS NULL OR COALESCE(ii.lead_time,'') = '')`
   ).get(name) as { c: number }).c;
 
