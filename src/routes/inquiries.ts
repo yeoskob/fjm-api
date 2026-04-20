@@ -453,8 +453,8 @@ inquiriesRouter.get('/dashboard/user', (req: Request, res: Response) => {
   const startOfMonthIso = startOfMonth.toISOString();
 
   // Sales stats
-  const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ?').get(name) as { c: number }).c;
-  const thisMonthSales = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND created_at >= ?').get(name, startOfMonthIso) as { c: number }).c;
+  const total = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status != 'missed'`).get(name) as { c: number }).c;
+  const thisMonthSales = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND created_at >= ? AND status != 'missed'`).get(name, startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status IN ('quotation_sent','ready_to_purchase')`).get(name) as { c: number }).c;
   const unsent = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiries WHERE sales_pic = ? AND status = 'unsent'`
@@ -523,8 +523,8 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   const startOfMonthIso = startOfMonth.toISOString();
 
   // Sales stats
-  const total = (db.prepare('SELECT COUNT(*) as c FROM inquiries').get() as { c: number }).c;
-  const thisMonth = (db.prepare('SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ?').get(startOfMonthIso) as { c: number }).c;
+  const total = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status != 'missed'`).get() as { c: number }).c;
+  const thisMonth = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE created_at >= ? AND status != 'missed'`).get(startOfMonthIso) as { c: number }).c;
   const quotationSent = (db.prepare(`SELECT COUNT(*) as c FROM inquiries WHERE status IN ('quotation_sent','ready_to_purchase')`).get() as { c: number }).c;
   const unsent = (db.prepare(
     `SELECT COUNT(*) as c FROM inquiries WHERE status = 'unsent'`
