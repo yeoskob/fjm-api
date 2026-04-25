@@ -4,7 +4,10 @@ exports.requireAuth = void 0;
 const db_1 = require("../db");
 function requireAuth(req, res, next) {
     const auth = req.headers['authorization'];
-    const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
+    // Also accept token as query param for EventSource (SSE) connections which
+    // cannot set custom headers in the browser.
+    const token = auth?.startsWith('Bearer ') ? auth.slice(7)
+        : req.query['token'] ?? null;
     if (!token) {
         res.status(401).json({ error: 'Unauthorized.' });
         return;

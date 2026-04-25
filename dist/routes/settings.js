@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.settingsRouter = void 0;
 const express_1 = require("express");
 const db_1 = require("../db");
+const id_1 = require("../utils/id");
 exports.settingsRouter = (0, express_1.Router)();
 // GET /settings
 exports.settingsRouter.get('/', (_req, res) => {
@@ -23,4 +24,46 @@ exports.settingsRouter.put('/:key', (req, res) => {
     db_1.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run(key, String(value));
     res.json({ key, value: String(value) });
+});
+// GET /settings/organizations
+exports.settingsRouter.get('/organizations', (_req, res) => {
+    const rows = db_1.db.prepare('SELECT id, code, created_at, created_by FROM organizations ORDER BY code ASC').all();
+    res.json(rows.map((row) => ({
+        id: row.id,
+        code: row.code,
+        createdAt: row.created_at,
+        createdBy: row.created_by,
+    })));
+});
+// POST /settings/organizations (admin only)
+exports.settingsRouter.post('/organizations', (req, res) => {
+    const authUser = req.user;
+    if (!authUser || authUser.role !== 'admin') {
+        res.status(403).json({ error: 'Only admin can manage organizations.' });
+        return;
+    }
+    const { code } = req.body;
+    const normalizedCode = String(code ?? '').trim().toUpperCase();
+    if (!normalizedCode) {
+        res.status(400).json({ error: 'code is required.' });
+        return;
+    }
+    if (!/^[A-Z0-9_-]{2,20}$/.test(normalizedCode)) {
+        res.status(400).json({ error: 'code must be 2-20 chars (A-Z, 0-9, _, -).' });
+        return;
+    }
+    const existing = db_1.db.prepare('SELECT id FROM organizations WHERE code = ?').get(normalizedCode);
+    if (existing) {
+        res.status(409).json({ error: 'Organization already exists.' });
+        return;
+    }
+    const id = (0, id_1.generateId)();
+    const createdAt = new Date().toISOString();
+    db_1.db.prepare('INSERT INTO organizations (id, code, created_at, created_by) VALUES (?, ?, ?, ?)').run(id, normalizedCode, createdAt, authUser.username);
+    res.status(201).json({
+        id,
+        code: normalizedCode,
+        createdAt,
+        createdBy: authUser.username,
+    });
 });

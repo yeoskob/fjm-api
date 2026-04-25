@@ -11,6 +11,7 @@ const products_1 = require("./routes/products");
 const inquiries_1 = require("./routes/inquiries");
 const roles_1 = require("./routes/roles");
 const settings_1 = require("./routes/settings");
+const notifications_1 = require("./routes/notifications");
 const requireAuth_1 = require("./middleware/requireAuth");
 require("./db");
 const app = (0, express_1.default)();
@@ -25,6 +26,7 @@ app.use('/products', requireAuth_1.requireAuth, products_1.productsRouter);
 app.use('/inquiries', requireAuth_1.requireAuth, inquiries_1.inquiriesRouter);
 app.use('/roles', requireAuth_1.requireAuth, roles_1.rolesRouter);
 app.use('/settings', requireAuth_1.requireAuth, settings_1.settingsRouter);
+app.use('/notifications', requireAuth_1.requireAuth, notifications_1.notificationsRouter);
 const port = Number(process.env.PORT) || 4000;
 app.listen(port, "0.0.0.0", () => {
     console.log(`API listening on ${port}`);
