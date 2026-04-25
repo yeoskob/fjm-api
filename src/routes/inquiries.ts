@@ -1592,8 +1592,8 @@ inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) 
   logActivity(
     id,
     `Counter price updated (${item.item_name ?? 'Item'})`,
-    'price_approval',
-    'price_approval',
+    inquiry.status,
+    inquiry.status,
     `Counter price: Rp ${nextCounterPrice.toLocaleString('id-ID')}${negotiationReason ? `. ${negotiationReason}` : ''}`,
     String(doneBy),
     String(doneByName ?? doneBy)
@@ -1810,5 +1810,6 @@ inquiriesRouter.patch('/:id/assign-sourcing', (req: Request, res: Response) => {
 
   res.json({ ok: true });
 });
+
 
 
