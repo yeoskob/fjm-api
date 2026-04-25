@@ -1368,7 +1368,7 @@ inquiriesRouter.post('/:id/send-to-sent', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-// POST /inquiries/:id/return-to-price-approval — Marketing sends back for price review (price_approved → price_approval)
+// POST /inquiries/:id/return-to-price-approval — Marketing sends back for price review (price_approved → follow_up)
 inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Response) => {
   const { id } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
@@ -1445,12 +1445,12 @@ inquiriesRouter.post('/:id/return-to-price-approval', (req: Request, res: Respon
   const rfqRowReview = db.prepare('SELECT rfq_no FROM inquiries WHERE id = ?').get(id) as { rfq_no: string | null } | undefined;
   const nowReview = new Date().toISOString();
   db.prepare('UPDATE inquiries SET status = ?, sourcing_pic = ?, updated_at = ?, updated_by = ?, price_approval_started_at = ? WHERE id = ?')
-    .run('price_approval', String(doneByName ?? doneBy), nowReview, String(doneBy), nowReview, id);
+    .run('follow_up', String(doneByName ?? doneBy), nowReview, String(doneBy), nowReview, id);
   logActivity(
     id,
-    `Returned to Price Approval for review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
+    `Sent to Price Review (${itemsNeedingReview.length} item${itemsNeedingReview.length > 1 ? 's' : ''})`,
     'price_approved',
-    'price_approval',
+    'follow_up',
     `Items: ${itemsNeedingReview.length}. Reason: ${reason}${reopeningReviewCount > 0 ? ' (includes negotiation review items)' : ''}`,
     String(doneBy),
     String(doneByName ?? doneBy)
@@ -1468,16 +1468,17 @@ inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response
   const { id } = req.params;
   const inquiry = db.prepare('SELECT id, status, rfq_no, sales_pic FROM inquiries WHERE id = ?').get(id) as { id: string; status: string; rfq_no: string | null; sales_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'price_approval') {
-    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' }); return;
   }
 
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
+  const oldStatus = inquiry.status;
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
     .run('price_approved', new Date().toISOString(), String(doneBy), id);
-  logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
+  logActivity(id, 'Sent to Price Approved', oldStatus, 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
 
   const salesRecipient = usernameForPic(inquiry.sales_pic);
   if (salesRecipient) {
