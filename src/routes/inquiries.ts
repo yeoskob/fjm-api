@@ -1230,6 +1230,9 @@ inquiriesRouter.post('/:id/sourcing-info', (req: Request, res: Response) => {
   if (!supplier || hargaBeli === undefined || !leadTime) {
     res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' }); return;
   }
+  if (!ppnType) {
+    res.status(400).json({ error: 'ppnType is required.' }); return;
+  }
 
   const item = db.prepare('SELECT id, price_approved FROM inquiry_items WHERE inquiry_id = ? ORDER BY id LIMIT 1').get(id) as { id: string; price_approved: number } | undefined;
   if (!item) { res.status(400).json({ error: 'No items found.' }); return; }
@@ -1263,6 +1266,9 @@ inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req: Request, res: Res
 
   if (!supplier || hargaBeli === undefined || !leadTime) {
     res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' }); return;
+  }
+  if (!ppnType) {
+    res.status(400).json({ error: 'ppnType is required.' }); return;
   }
 
   db.prepare(
@@ -1810,6 +1816,7 @@ inquiriesRouter.patch('/:id/assign-sourcing', (req: Request, res: Response) => {
 
   res.json({ ok: true });
 });
+
 
 
 
