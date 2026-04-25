@@ -316,10 +316,11 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   autoMarkMissedRfqs();
   autoMarkUnsentRfqs();
 
-  const { month, salesPic, status, search, dateField, dateFrom, dateTo } = req.query as {
-    month?: string; salesPic?: string; status?: string; search?: string;
+  const { month, salesPic, status, search, audience, dateField, dateFrom, dateTo } = req.query as {
+    month?: string; salesPic?: string; status?: string; search?: string; audience?: string;
     dateField?: string; dateFrom?: string; dateTo?: string;
   };
+  const isPurchasingExport = audience === 'purchasing';
 
   const params: unknown[] = [];
   let where = `WHERE 1=1`;
@@ -404,18 +405,34 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   ];
 
   // Sheet 2: Items
+  const itemHeaders = isPurchasingExport
+    ? ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Lead Time', 'MOQ', 'Stock', 'PPN Type']
+    : ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'];
+
   const itemsData = [
     ...metadata,
-    ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'],
-    ...itemRows.map((r) => [
-      r['rfq_no'], r['customer'], r['sales_pic'],
-      r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
-      r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
-      r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
-      r['supplier'] ?? '', r['harga_beli'] ?? '', r['harga_jual'] ?? '',
-      r['margin'] ?? '', r['lead_time'] ?? '', r['moq'] ?? '',
-      r['stock_availability'] ?? '', r['ppn_type'] ?? '',
-    ]),
+    itemHeaders,
+    ...itemRows.map((r) => (
+      isPurchasingExport
+        ? [
+            r['rfq_no'], r['customer'], r['sales_pic'],
+            r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
+            r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
+            r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
+            r['supplier'] ?? '', r['harga_beli'] ?? '',
+            r['lead_time'] ?? '', r['moq'] ?? '',
+            r['stock_availability'] ?? '', r['ppn_type'] ?? '',
+          ]
+        : [
+            r['rfq_no'], r['customer'], r['sales_pic'],
+            r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
+            r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
+            r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
+            r['supplier'] ?? '', r['harga_beli'] ?? '', r['harga_jual'] ?? '',
+            r['margin'] ?? '', r['lead_time'] ?? '', r['moq'] ?? '',
+            r['stock_availability'] ?? '', r['ppn_type'] ?? '',
+          ]
+    )),
   ];
 
   const wb = XLSX.utils.book_new();
