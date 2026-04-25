@@ -1305,8 +1305,8 @@ inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) =>
   const { id } = req.params;
   const inquiry = db.prepare('SELECT id, status, rfq_no, sourcing_pic FROM inquiries WHERE id = ?').get(id) as { id: string; status: string; rfq_no: string | null; sourcing_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'price_approval') {
-    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' }); return;
   }
 
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
@@ -1314,7 +1314,7 @@ inquiriesRouter.post('/:id/return-to-sourcing', (req: Request, res: Response) =>
 
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
     .run('rfq', new Date().toISOString(), String(doneBy), id);
-  logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
+  logActivity(id, 'Returned to Sourcing', inquiry.status, 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
 
   const sourcingRecipient = usernameForPic(inquiry.sourcing_pic);
   if (sourcingRecipient) {
@@ -1466,8 +1466,8 @@ inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response
   const { id } = req.params;
   const inquiry = db.prepare('SELECT id, status, rfq_no, sales_pic FROM inquiries WHERE id = ?').get(id) as { id: string; status: string; rfq_no: string | null; sales_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'price_approval') {
-    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' }); return;
   }
 
   const { doneBy, doneByName } = req.body as Record<string, unknown>;
@@ -1475,7 +1475,7 @@ inquiriesRouter.post('/:id/send-to-price-approved', (req: Request, res: Response
 
   db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
     .run('price_approved', new Date().toISOString(), String(doneBy), id);
-  logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
+  logActivity(id, 'Sent to Price Approved', inquiry.status, 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
 
   const salesRecipient = usernameForPic(inquiry.sales_pic);
   if (salesRecipient) {
@@ -1495,8 +1495,8 @@ inquiriesRouter.post('/:id/approve', (req: Request, res: Response) => {
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
 
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'price_approval') {
-    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' }); return;
   }
 
   const { hargaJual, leadTimeCustomer, validitasQuotation, catatanQuotation, doneBy, doneByName } =
@@ -1514,7 +1514,7 @@ inquiriesRouter.post('/:id/approve', (req: Request, res: Response) => {
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`
   ).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
 
-  logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  logActivity(id, 'Price approved', inquiry.status, inquiry.status, String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
 });
@@ -1523,8 +1523,8 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'price_approval') {
-    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' }); return;
   }
 
   const item = db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string; harga_beli: number | null } | undefined;
@@ -1542,7 +1542,7 @@ inquiriesRouter.post('/:id/items/:itemId/approve', (req: Request, res: Response)
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`
   ).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
 
-  logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+  logActivity(id, 'Price approved', inquiry.status, inquiry.status, String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
   res.json({ ok: true });
 });
@@ -1552,8 +1552,8 @@ inquiriesRouter.post('/:id/items/:itemId/reject', (req: Request, res: Response) 
   const { id, itemId } = req.params;
   const inquiry = db.prepare('SELECT id, status FROM inquiries WHERE id = ?').get(id) as { id: string; status: string } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
-  if (inquiry.status !== 'price_approval') {
-    res.status(400).json({ error: 'Inquiry must be in price_approval status.' }); return;
+  if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
+    res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' }); return;
   }
 
   const item = db.prepare(
@@ -1810,4 +1810,5 @@ inquiriesRouter.patch('/:id/assign-sourcing', (req: Request, res: Response) => {
 
   res.json({ ok: true });
 });
+
 
