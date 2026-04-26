@@ -264,7 +264,7 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
 
   const rows = db.prepare(`
     SELECT
-      i.id, i.rfq_no, i.customer, i.sales_pic, i.tanggal, i.status,
+      i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
       MIN(ii.item_need_by_date) AS need_by_date,
       CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
@@ -342,7 +342,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
 
   const summaryRows = db.prepare(`
     SELECT
-      i.id, i.rfq_no, i.customer, i.sales_pic, i.tanggal, i.status,
+      i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
       MIN(ii.item_need_by_date) AS need_by_date,
       CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
@@ -359,7 +359,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   const ids = summaryRows.map((r) => r['id'] as string);
   const itemRows = ids.length > 0
     ? db.prepare(`
-        SELECT i.rfq_no, i.customer, i.sales_pic, i.tanggal,
+        SELECT i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal,
           ii.item_name, ii.item_quantity, ii.item_uom, ii.item_need_by_date,
           ii.supplier, ii.harga_beli, ii.harga_jual, ii.margin,
           ii.lead_time, ii.moq, ii.stock_availability, ii.ppn_type
@@ -393,9 +393,9 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   // Sheet 1: Summary
   const summaryData = [
     ...metadata,
-    ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Need By Date', 'Timeline (days)', 'Days Taken', 'Status'],
+    ['RFQ No', 'Customer', 'Sales PIC', 'Sourcing PIC', 'Inquiry Date', 'Need By Date', 'Timeline (days)', 'Days Taken', 'Status'],
     ...summaryRows.map((r) => [
-      r['rfq_no'], r['customer'], r['sales_pic'],
+      r['rfq_no'], r['customer'], r['sales_pic'], r['sourcing_pic'] ?? '',
       r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
       r['need_by_date'] ? String(r['need_by_date']).slice(0, 10) : '',
       r['timeline_days'] ?? '',
@@ -406,8 +406,8 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
 
   // Sheet 2: Items
   const itemHeaders = isPurchasingExport
-    ? ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Lead Time', 'MOQ', 'Stock', 'PPN Type']
-    : ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'];
+    ? ['RFQ No', 'Customer', 'Sales PIC', 'Sourcing PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Lead Time', 'MOQ', 'Stock', 'PPN Type']
+    : ['RFQ No', 'Customer', 'Sales PIC', 'Sourcing PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'];
 
   const itemsData = [
     ...metadata,
@@ -415,7 +415,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
     ...itemRows.map((r) => (
       isPurchasingExport
         ? [
-            r['rfq_no'], r['customer'], r['sales_pic'],
+            r['rfq_no'], r['customer'], r['sales_pic'], r['sourcing_pic'] ?? '',
             r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
             r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
             r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
@@ -424,7 +424,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
             r['stock_availability'] ?? '', r['ppn_type'] ?? '',
           ]
         : [
-            r['rfq_no'], r['customer'], r['sales_pic'],
+            r['rfq_no'], r['customer'], r['sales_pic'], r['sourcing_pic'] ?? '',
             r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
             r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
             r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
