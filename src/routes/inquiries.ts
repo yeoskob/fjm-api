@@ -1307,6 +1307,19 @@ inquiriesRouter.post('/:id/send-to-price-approval', (req: Request, res: Response
     res.status(400).json({ error: 'Inquiry must be in rfq status.' }); return;
   }
 
+  const submittedCount = (db.prepare(`
+    SELECT COUNT(*) as c
+    FROM inquiry_items
+    WHERE inquiry_id = ?
+      AND COALESCE(supplier, '') != ''
+      AND harga_beli IS NOT NULL
+      AND COALESCE(lead_time, '') != ''
+      AND COALESCE(sourcing_missed, 0) = 0
+  `).get(id) as { c: number }).c;
+  if (submittedCount === 0) {
+    res.status(400).json({ error: 'At least one item must be sourced before sending to Price Approval.' }); return;
+  }
+
   const { doneBy, doneByName, note } = req.body as Record<string, unknown>;
   if (!doneBy) { res.status(400).json({ error: 'doneBy is required.' }); return; }
 
