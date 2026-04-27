@@ -36,6 +36,20 @@ export interface NotificationRecord {
   recipient_username: string | null;
 }
 
+function formatNotificationTitle(rfqNo: string | null | undefined, customer: string | null | undefined): string | null {
+  const rfq = String(rfqNo ?? '').trim();
+  if (!rfq) return null;
+
+  const prefixedRfq = rfq.startsWith('#') ? rfq : `#${rfq}`;
+  const customerName = String(customer ?? '').trim();
+  return customerName ? `${prefixedRfq}-${customerName}` : prefixedRfq;
+}
+
+function notificationTitleForInquiry(inquiryId: string, rfqNo: string | null | undefined): string | null {
+  const row = db.prepare('SELECT customer FROM inquiries WHERE id = ?').get(inquiryId) as { customer: string | null } | undefined;
+  return formatNotificationTitle(rfqNo, row?.customer ?? null);
+}
+
 // ── Shared helper called from other routers ──────────────────────────────────
 
 export function insertAndBroadcast(
@@ -56,7 +70,7 @@ export function insertAndBroadcast(
   ).run(id, type, inquiryId, rfqNo ?? null, message, triggeredBy, triggeredByName, createdAt, recipientUsername ?? null);
 
   const notif: NotificationRecord = {
-    id, type, inquiry_id: inquiryId, rfq_no: rfqNo ?? null, message,
+    id, type, inquiry_id: inquiryId, rfq_no: notificationTitleForInquiry(inquiryId, rfqNo), message,
     triggered_by: triggeredBy, triggered_by_name: triggeredByName,
     created_at: createdAt, read_at: null, recipient_username: recipientUsername ?? null,
   };
@@ -81,12 +95,17 @@ export function usernameForPic(pic: string | null | undefined): string | null {
 notificationsRouter.get('/', (req: Request, res: Response) => {
   const user = (req as any).user as { username: string; role: string };
   const rows = db.prepare(
-    `SELECT * FROM notifications
-     WHERE read_at IS NULL
-       AND (recipient_username IS NULL OR recipient_username = ?)
-     ORDER BY created_at DESC`
-  ).all(user.username) as NotificationRecord[];
-  res.json(rows);
+    `SELECT n.*, i.customer AS customer
+     FROM notifications n
+     LEFT JOIN inquiries i ON i.id = n.inquiry_id
+     WHERE n.read_at IS NULL
+       AND (n.recipient_username IS NULL OR n.recipient_username = ?)
+     ORDER BY n.created_at DESC`
+  ).all(user.username) as Array<NotificationRecord & { customer: string | null }>;
+  res.json(rows.map(({ customer, ...row }) => ({
+    ...row,
+    rfq_no: formatNotificationTitle(row.rfq_no, customer),
+  })));
 });
 
 // POST /notifications/read-all — mark every unread notification visible to
