@@ -1086,16 +1086,21 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Cannot edit inquiry at this stage.' }); return;
   }
 
+  const body = req.body as Record<string, unknown>;
   const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, updatedBy, updatedByName } =
-    req.body as Record<string, unknown>;
-  const org = req.body ? normalizeOrganization((req.body as Record<string, unknown>)['organization']) : null;
-  if ((req.body as Record<string, unknown>)['organization'] != null && !org) {
+    body;
+  const org = req.body ? normalizeOrganization(body['organization']) : null;
+  if (body['organization'] != null && !org) {
     res.status(400).json({ error: 'organization must exist in Settings.' }); return;
   }
 
   const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
+  const rawItems = Array.isArray(body['items']) ? body['items'] as Array<Record<string, unknown>> : null;
+  if (rawItems && rawItems.length === 0) {
+    res.status(400).json({ error: 'At least one item is required.' }); return;
+  }
 
-  db.prepare(
+  const updateInquiry = db.prepare(
     `UPDATE inquiries SET
        customer = COALESCE(?, customer), sales_pic = COALESCE(?, sales_pic),
        organization = COALESCE(?, organization),
@@ -1103,25 +1108,69 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
        deadline_quotation = ?, lampiran = ?,
        updated_at = ?, updated_by = ?
      WHERE id = ?`
-  ).run(customer ?? null, salesPic ?? null, org ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
+  );
+  const updateSingleItem = db.prepare(
+    `UPDATE inquiry_items SET
+       item_name = COALESCE(?, item_name),
+       item_extended_description = ?,
+       item_quantity = ?,
+       item_uom = ?,
+       item_need_by_date = ?,
+       item_manufacturer_name = ?,
+       item_manufacturer_part_number = ?,
+       item_classification_of_goods = ?,
+       item_image = ?
+     WHERE inquiry_id = ?`
+  );
+  const updateItem = db.prepare(
+    `UPDATE inquiry_items SET
+       item_name = ?,
+       item_extended_description = ?,
+       item_quantity = ?,
+       item_uom = ?,
+       item_need_by_date = ?,
+       item_image = ?
+     WHERE id = ? AND inquiry_id = ?`
+  );
+  const insertItem = db.prepare(
+    `INSERT INTO inquiry_items (id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
+      item_extended_description, item_image)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const deleteMissingItems = db.prepare(
+    `DELETE FROM inquiry_items
+     WHERE inquiry_id = ? AND id NOT IN (${rawItems?.map(() => '?').join(',') || "''"})`
+  );
+  const runUpdate = db.transaction(() => {
+    updateInquiry.run(customer ?? null, salesPic ?? null, org ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
 
-  const itemCount = (db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id) as { c: number }).c;
-  if (itemCount === 1) {
-    db.prepare(
-      `UPDATE inquiry_items SET
-         item_name = COALESCE(?, item_name),
-         item_extended_description = ?,
-         item_quantity = ?,
-          item_uom = ?,
-          item_need_by_date = ?,
-          item_manufacturer_name = ?,
-          item_manufacturer_part_number = ?,
-          item_classification_of_goods = ?,
-          item_image = ?
-        WHERE inquiry_id = ?`
-    ).run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate,
-      itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, itemImage ?? null, id);
-  }
+    if (rawItems) {
+      const keptIds: string[] = [];
+      for (const item of rawItems) {
+        const itemId = typeof item['id'] === 'string' && item['id'] ? String(item['id']) : generateId();
+        const existing = db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string } | undefined;
+        const itemName = String(item['itemName'] ?? '').trim();
+        const itemQuantity = item['itemQuantity'] ?? null;
+        const itemUomValue = String(item['itemUom'] ?? '').trim();
+        const itemDescription = item['itemExtendedDescription'] == null ? null : String(item['itemExtendedDescription']).trim();
+        const itemImageValue = item['itemImage'] ?? null;
+        keptIds.push(itemId);
+        if (existing) {
+          updateItem.run(itemName, itemDescription, itemQuantity, itemUomValue, needByDate, itemImageValue, itemId, id);
+        } else {
+          insertItem.run(itemId, id, itemName, itemQuantity, itemUomValue, needByDate, itemDescription, itemImageValue);
+        }
+      }
+      deleteMissingItems.run(id, ...keptIds);
+    } else {
+      const itemCount = (db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id) as { c: number }).c;
+      if (itemCount === 1) {
+        updateSingleItem.run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate,
+          itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, itemImage ?? null, id);
+      }
+    }
+  });
+  runUpdate();
 
   logActivity(id, 'Inquiry updated', inquiry.status, inquiry.status, null, String(updatedBy ?? ''), String(updatedByName ?? updatedBy ?? ''));
   res.json({ ok: true });
