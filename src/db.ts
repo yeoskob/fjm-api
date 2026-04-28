@@ -70,7 +70,8 @@ db.exec(`
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
     updated_at TEXT,
-    updated_by TEXT
+    updated_by TEXT,
+    price_approval_started_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS inquiry_items (
@@ -119,6 +120,7 @@ db.exec(`
     review_round INTEGER NOT NULL DEFAULT 0,
     approved_price REAL,
     alternate_name TEXT,
+    ppn_type TEXT,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
   );
 
@@ -153,6 +155,18 @@ db.exec(`
     code TEXT UNIQUE NOT NULL,
     created_at TEXT NOT NULL,
     created_by TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    inquiry_id TEXT NOT NULL,
+    rfq_no TEXT,
+    message TEXT NOT NULL,
+    triggered_by TEXT NOT NULL,
+    triggered_by_name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    read_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS inquiry_notes (
@@ -213,7 +227,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 17;
+const LATEST_VERSION = 20;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -421,6 +435,59 @@ const migrations: Array<{ version: number; run: () => void }> = [
       insertOrg.run(generateId(), 'FSA', now, 'system');
     },
   },
+  {
+    // Create persistent notification queue for push events
+    version: 17,
+    run: () => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          inquiry_id TEXT NOT NULL,
+          rfq_no TEXT,
+          message TEXT NOT NULL,
+          triggered_by TEXT NOT NULL,
+          triggered_by_name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          read_at TEXT
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications (read_at)`);
+    },
+  },
+  {
+    // Add price_approval_started_at to track when an inquiry entered price_approval
+    version: 18,
+    run: () => {
+      if (!cols('inquiries').includes('price_approval_started_at'))
+        db.exec('ALTER TABLE inquiries ADD COLUMN price_approval_started_at TEXT');
+    },
+  },
+  {
+    // Add ppn_type to inquiry_items
+    version: 19,
+    run: () => {
+      if (!cols('inquiry_items').includes('ppn_type'))
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN ppn_type TEXT');
+    },
+  },
+  {
+    // Migrate previously-flagged missed RFQs to status = 'missed'
+    version: 20,
+    run: () => {
+      db.exec(`UPDATE inquiries SET status = 'missed' WHERE status = 'rfq' AND sourcing_missed = 1`);
+    },
+  },
+  {
+    // Add recipient_username to notifications for per-user targeting
+    version: 21,
+    run: () => {
+      if (!cols('notifications').includes('recipient_username')) {
+        db.exec('ALTER TABLE notifications ADD COLUMN recipient_username TEXT');
+      }
+      db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications (recipient_username)');
+    },
+  },
 ];
 
 const runMigrations = () => {
@@ -496,6 +563,16 @@ const ensureOrganizationsTable = () => {
 };
 
 ensureOrganizationsTable();
+
+const ensureNotificationsColumns = () => {
+  const c = cols('notifications');
+  if (!c.includes('recipient_username')) {
+    db.exec('ALTER TABLE notifications ADD COLUMN recipient_username TEXT');
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications (recipient_username)');
+};
+
+ensureNotificationsColumns();
 
 // ─── Seed data ────────────────────────────────────────────────────────────────
 

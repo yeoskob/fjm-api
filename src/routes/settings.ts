@@ -1,4 +1,7 @@
 import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { db } from '../db';
 import { generateId } from '../utils/id';
 
@@ -20,6 +23,32 @@ settingsRouter.put('/:key', (req: Request, res: Response) => {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run(key, String(value));
   res.json({ key, value: String(value) });
+});
+
+// GET /settings/backup (admin only)
+settingsRouter.get('/backup', async (req: Request, res: Response) => {
+  const authUser = (req as any).user as { id: string; username: string; role: string } | undefined;
+  if (!authUser || authUser.role !== 'admin') {
+    res.status(403).json({ error: 'Only admin can backup the database.' });
+    return;
+  }
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const filename = `fjm-db-backup-${timestamp}.db`;
+  const backupPath = path.join(os.tmpdir(), filename);
+
+  try {
+    await db.backup(backupPath);
+    res.download(backupPath, filename, (err) => {
+      fs.promises.rm(backupPath, { force: true }).catch(() => undefined);
+      if (err && !res.headersSent) {
+        res.status(500).json({ error: 'Failed to download database backup.' });
+      }
+    });
+  } catch (err) {
+    fs.promises.rm(backupPath, { force: true }).catch(() => undefined);
+    res.status(500).json({ error: 'Failed to create database backup.' });
+  }
 });
 
 // GET /settings/organizations

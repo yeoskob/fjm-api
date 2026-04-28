@@ -56,6 +56,7 @@ exports.db.exec(`
     sales_pic TEXT NOT NULL,
     sourcing_pic TEXT,
     coupa_source INTEGER NOT NULL DEFAULT 0,
+    organization TEXT NOT NULL DEFAULT 'FJM',
     coupa_file_name TEXT,
     nama_barang TEXT,
     spesifikasi TEXT,
@@ -69,7 +70,8 @@ exports.db.exec(`
     created_at TEXT NOT NULL,
     created_by TEXT NOT NULL,
     updated_at TEXT,
-    updated_by TEXT
+    updated_by TEXT,
+    price_approval_started_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS inquiry_items (
@@ -118,6 +120,7 @@ exports.db.exec(`
     review_round INTEGER NOT NULL DEFAULT 0,
     approved_price REAL,
     alternate_name TEXT,
+    ppn_type TEXT,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
   );
 
@@ -145,6 +148,25 @@ exports.db.exec(`
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS organizations (
+    id TEXT PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    inquiry_id TEXT NOT NULL,
+    rfq_no TEXT,
+    message TEXT NOT NULL,
+    triggered_by TEXT NOT NULL,
+    triggered_by_name TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    read_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS inquiry_notes (
@@ -201,7 +223,7 @@ exports.db.exec(`
 // Each migration runs exactly once, identified by its version number.
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
-const LATEST_VERSION = 14;
+const LATEST_VERSION = 20;
 const cols = (table) => exports.db.prepare(`PRAGMA table_info('${table}')`).all().map((c) => c.name);
 const migrations = [
     {
@@ -355,6 +377,96 @@ const migrations = [
             }
         },
     },
+    {
+        // Add organization to inquiries
+        version: 15,
+        run: () => {
+            if (!cols('inquiries').includes('organization')) {
+                exports.db.exec("ALTER TABLE inquiries ADD COLUMN organization TEXT NOT NULL DEFAULT 'FJM'");
+            }
+            exports.db.exec("UPDATE inquiries SET organization = 'FJM' WHERE organization IS NULL OR organization = ''");
+        },
+    },
+    {
+        // Add sourcing_missed to inquiries (RFQ-level missed tracking)
+        version: 17,
+        run: () => {
+            if (!cols('inquiries').includes('sourcing_missed'))
+                exports.db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
+        },
+    },
+    {
+        // Create organizations master table and seed defaults
+        version: 16,
+        run: () => {
+            exports.db.exec(`
+        CREATE TABLE IF NOT EXISTS organizations (
+          id TEXT PRIMARY KEY,
+          code TEXT UNIQUE NOT NULL,
+          created_at TEXT NOT NULL,
+          created_by TEXT
+        )
+      `);
+            const now = new Date().toISOString();
+            const insertOrg = exports.db.prepare('INSERT OR IGNORE INTO organizations (id, code, created_at, created_by) VALUES (?, ?, ?, ?)');
+            insertOrg.run((0, id_1.generateId)(), 'FJM', now, 'system');
+            insertOrg.run((0, id_1.generateId)(), 'FMI', now, 'system');
+            insertOrg.run((0, id_1.generateId)(), 'FSA', now, 'system');
+        },
+    },
+    {
+        // Create persistent notification queue for push events
+        version: 17,
+        run: () => {
+            exports.db.exec(`
+        CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL,
+          inquiry_id TEXT NOT NULL,
+          rfq_no TEXT,
+          message TEXT NOT NULL,
+          triggered_by TEXT NOT NULL,
+          triggered_by_name TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          read_at TEXT
+        )
+      `);
+            exports.db.exec(`CREATE INDEX IF NOT EXISTS idx_notifications_read_at ON notifications (read_at)`);
+        },
+    },
+    {
+        // Add price_approval_started_at to track when an inquiry entered price_approval
+        version: 18,
+        run: () => {
+            if (!cols('inquiries').includes('price_approval_started_at'))
+                exports.db.exec('ALTER TABLE inquiries ADD COLUMN price_approval_started_at TEXT');
+        },
+    },
+    {
+        // Add ppn_type to inquiry_items
+        version: 19,
+        run: () => {
+            if (!cols('inquiry_items').includes('ppn_type'))
+                exports.db.exec('ALTER TABLE inquiry_items ADD COLUMN ppn_type TEXT');
+        },
+    },
+    {
+        // Migrate previously-flagged missed RFQs to status = 'missed'
+        version: 20,
+        run: () => {
+            exports.db.exec(`UPDATE inquiries SET status = 'missed' WHERE status = 'rfq' AND sourcing_missed = 1`);
+        },
+    },
+    {
+        // Add recipient_username to notifications for per-user targeting
+        version: 21,
+        run: () => {
+            if (!cols('notifications').includes('recipient_username')) {
+                exports.db.exec('ALTER TABLE notifications ADD COLUMN recipient_username TEXT');
+            }
+            exports.db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications (recipient_username)');
+        },
+    },
 ];
 const runMigrations = () => {
     const versionRow = exports.db.prepare('SELECT version FROM schema_version').get();
@@ -402,8 +514,33 @@ const ensureInquiriesColumns = () => {
     if (!c.includes('sent_incomplete_reason')) {
         exports.db.exec('ALTER TABLE inquiries ADD COLUMN sent_incomplete_reason TEXT');
     }
+    if (!c.includes('organization')) {
+        exports.db.exec("ALTER TABLE inquiries ADD COLUMN organization TEXT NOT NULL DEFAULT 'FJM'");
+    }
+    exports.db.exec("UPDATE inquiries SET organization = 'FJM' WHERE organization IS NULL OR organization = ''");
+    if (!c.includes('sourcing_missed'))
+        exports.db.exec('ALTER TABLE inquiries ADD COLUMN sourcing_missed INTEGER NOT NULL DEFAULT 0');
 };
 ensureInquiriesColumns();
+const ensureOrganizationsTable = () => {
+    exports.db.exec(`
+    CREATE TABLE IF NOT EXISTS organizations (
+      id TEXT PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      created_at TEXT NOT NULL,
+      created_by TEXT
+    )
+  `);
+};
+ensureOrganizationsTable();
+const ensureNotificationsColumns = () => {
+    const c = cols('notifications');
+    if (!c.includes('recipient_username')) {
+        exports.db.exec('ALTER TABLE notifications ADD COLUMN recipient_username TEXT');
+    }
+    exports.db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications (recipient_username)');
+};
+ensureNotificationsColumns();
 // ─── Seed data ────────────────────────────────────────────────────────────────
 const ensureDefaultRoles = () => {
     const defaults = [
@@ -435,6 +572,17 @@ const seedUsers = () => {
         insert.run(row); });
     tx(seed);
 };
+const seedOrganizations = () => {
+    const now = new Date().toISOString();
+    const insert = exports.db.prepare('INSERT OR IGNORE INTO organizations (id, code, created_at, created_by) VALUES (?, ?, ?, ?)');
+    const tx = exports.db.transaction(() => {
+        insert.run((0, id_1.generateId)(), 'FJM', now, 'system');
+        insert.run((0, id_1.generateId)(), 'FMI', now, 'system');
+        insert.run((0, id_1.generateId)(), 'FSA', now, 'system');
+    });
+    tx();
+};
 ensureDefaultRoles();
 seedUsers();
+seedOrganizations();
 exports.db.prepare(`INSERT OR IGNORE INTO settings (key, value) VALUES ('default_margin_pct', '20')`).run();
