@@ -866,7 +866,7 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Cannot edit inquiry at this stage.' }); return;
   }
 
-  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, updatedBy, updatedByName } =
+  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, updatedBy, updatedByName } =
     req.body as Record<string, unknown>;
   const org = req.body ? normalizeOrganization((req.body as Record<string, unknown>)['organization']) : null;
   if ((req.body as Record<string, unknown>)['organization'] != null && !org) {
@@ -892,14 +892,15 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
          item_name = COALESCE(?, item_name),
          item_extended_description = ?,
          item_quantity = ?,
-         item_uom = ?,
-         item_need_by_date = ?,
-         item_manufacturer_name = ?,
-         item_manufacturer_part_number = ?,
-         item_classification_of_goods = ?
-       WHERE inquiry_id = ?`
+          item_uom = ?,
+          item_need_by_date = ?,
+          item_manufacturer_name = ?,
+          item_manufacturer_part_number = ?,
+          item_classification_of_goods = ?,
+          item_image = ?
+        WHERE inquiry_id = ?`
     ).run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate,
-      itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, id);
+      itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, itemImage ?? null, id);
   }
 
   logActivity(id, 'Inquiry updated', inquiry.status, inquiry.status, null, String(updatedBy ?? ''), String(updatedByName ?? updatedBy ?? ''));
