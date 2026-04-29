@@ -771,12 +771,16 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
   const salesPic = String(createdByName ?? createdBy);
   const firstItemName = String(items[0]?.item_name ?? 'Multiple items');
   const namaBarang = items.length > 1 ? `${firstItemName} +${items.length - 1} items` : firstItemName;
+  const deadlineQuotation = items
+    .map((item) => item['item_need_by_date'])
+    .filter((date): date is string => typeof date === 'string' && date !== '')
+    .sort()[0] ?? null;
 
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, status, coupa_source, organization, coupa_file_name, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'new_inquiry', 1, ?, ?, ?, ?)`
-    ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, org, String(fileName), createdAt, createdBy);
+      `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, deadline_quotation, status, coupa_source, organization, coupa_file_name, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'new_inquiry', 1, ?, ?, ?, ?)`
+    ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, deadlineQuotation, org, String(fileName), createdAt, createdBy);
 
     const insertItem = db.prepare(
       `INSERT INTO inquiry_items (
