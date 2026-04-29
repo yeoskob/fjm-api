@@ -86,6 +86,15 @@ exports.usersRouter.delete('/:id', (req, res) => {
         return;
     }
     const { id } = req.params;
+    const user = db_1.db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
+    if (!user) {
+        res.status(404).json({ error: 'User not found.' });
+        return;
+    }
+    if (user.role === 'admin') {
+        res.status(400).json({ error: 'Admin users cannot be deleted.' });
+        return;
+    }
     db_1.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     res.status(204).send();
 });

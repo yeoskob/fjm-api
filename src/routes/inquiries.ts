@@ -634,12 +634,15 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ sourcing_pic: string; items_count: number }>;
 
   const urgentRfqs = db.prepare(
-    `SELECT id, rfq_no, customer, sourcing_pic, deadline_quotation,
-       CAST(julianday(deadline_quotation) - julianday('now') AS INTEGER) as days_left
-     FROM inquiries
-     WHERE status = 'rfq' AND sourcing_missed = 0 AND deadline_quotation IS NOT NULL
-     ORDER BY deadline_quotation ASC LIMIT 8`
-  ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; deadline_quotation: string; days_left: number }>;
+    `SELECT i.id, i.rfq_no, i.customer, i.sourcing_pic,
+       MIN(ii.item_need_by_date) AS need_by_date,
+       CAST(julianday(MIN(ii.item_need_by_date)) - julianday('now') AS INTEGER) AS days_left
+     FROM inquiries i
+     JOIN inquiry_items ii ON ii.inquiry_id = i.id
+     WHERE i.status = 'rfq' AND i.sourcing_missed = 0 AND ii.item_need_by_date IS NOT NULL
+     GROUP BY i.id
+     ORDER BY need_by_date ASC LIMIT 8`
+  ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; need_by_date: string; days_left: number }>;
 
   res.json({
     total, thisMonth, quotationSent, unsent, conversionRate, topSales, topMarketing, statusBreakdown,
