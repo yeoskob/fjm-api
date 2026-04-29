@@ -278,8 +278,8 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
   const rows = db.prepare(`
     SELECT
       i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
-      MIN(ii.item_need_by_date) AS need_by_date,
-      CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
+      COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
+      CAST(julianday(COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date))) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
     FROM inquiries i
     LEFT JOIN inquiry_items ii
@@ -311,7 +311,7 @@ inquiriesRouter.get('/report/sourcing', (req: Request, res: Response) => {
   const rows = db.prepare(`
     SELECT
       i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
-      MIN(ii.item_need_by_date) AS need_by_date,
+      COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
       COUNT(ii.id) AS total_items,
       SUM(CASE WHEN COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != '' THEN 1 ELSE 0 END) AS sourced_items
     FROM inquiries i
@@ -347,7 +347,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   }
   if (dateFrom || dateTo) {
     const dateExpr = dateField === 'need_by_date'
-      ? `(SELECT MIN(item_need_by_date) FROM inquiry_items WHERE inquiry_id = i.id)`
+      ? `COALESCE(NULLIF(i.deadline_quotation, ''), (SELECT MIN(item_need_by_date) FROM inquiry_items WHERE inquiry_id = i.id))`
       : `date(i.tanggal)`;
     if (dateFrom) { where += ` AND ${dateExpr} >= ?`; params.push(String(dateFrom)); }
     if (dateTo)   { where += ` AND ${dateExpr} <= ?`; params.push(String(dateTo)); }
@@ -356,8 +356,8 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   const summaryRows = db.prepare(`
     SELECT
       i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
-      MIN(ii.item_need_by_date) AS need_by_date,
-      CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
+      COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
+      CAST(julianday(COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date))) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
     FROM inquiries i
     LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id AND ii.item_need_by_date IS NOT NULL
