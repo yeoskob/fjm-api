@@ -656,6 +656,7 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
        AND i.sourcing_missed = 0
      GROUP BY i.id
      HAVING need_by_date IS NOT NULL AND need_by_date != ''
+       AND days_left <= 1
      ORDER BY need_by_date ASC LIMIT 8`
   ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; need_by_date: string; days_left: number }>;
 
