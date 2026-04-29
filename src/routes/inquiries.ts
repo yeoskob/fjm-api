@@ -82,6 +82,12 @@ function mapItem(row: Record<string, unknown>) {
 }
 
 function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, unknown>>) {
+  const itemNeedByDate = items
+    .map((item) => item['item_need_by_date'])
+    .filter((date): date is string => typeof date === 'string' && date !== '')
+    .sort()[0] ?? null;
+  const needByDate = row['deadline_quotation'] || itemNeedByDate;
+
   return {
     id: row['id'],
     rfqNo: row['rfq_no'],
@@ -99,7 +105,7 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
     updatedBy: row['updated_by'],
     sentIncomplete: row['sent_incomplete'] === 1,
     sentIncompleteReason: row['sent_incomplete_reason'] ?? null,
-    needByDate: row['deadline_quotation'] ?? null,
+    needByDate,
     sourcingMissed: row['sourcing_missed'] === 1,
     priceApprovalStartedAt: row['price_approval_started_at'] ?? null,
     items: items.map(mapItem),
@@ -642,16 +648,15 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
 
   const urgentRfqs = db.prepare(
     `SELECT i.id, i.rfq_no, i.customer, i.sourcing_pic,
-       MIN(ii.item_need_by_date) AS need_by_date,
-       CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date('now', 'localtime')) AS INTEGER) AS days_left
+       COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
+       CAST(julianday(COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date))) - julianday(date('now', 'localtime')) AS INTEGER) AS days_left
      FROM inquiries i
-     JOIN inquiry_items ii ON ii.inquiry_id = i.id
+     LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id
      WHERE i.status = 'rfq'
        AND i.sourcing_missed = 0
-       AND ii.item_need_by_date IS NOT NULL
-       AND ii.item_need_by_date != ''
      GROUP BY i.id
-     ORDER BY MIN(ii.item_need_by_date) ASC LIMIT 8`
+     HAVING need_by_date IS NOT NULL AND need_by_date != ''
+     ORDER BY need_by_date ASC LIMIT 8`
   ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; need_by_date: string; days_left: number }>;
 
   res.json({
