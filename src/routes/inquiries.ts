@@ -82,6 +82,12 @@ function mapItem(row: Record<string, unknown>) {
 }
 
 function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, unknown>>) {
+  const itemNeedByDate = items
+    .map((item) => item['item_need_by_date'])
+    .filter((date): date is string => typeof date === 'string' && date !== '')
+    .sort()[0] ?? null;
+  const needByDate = row['deadline_quotation'] || itemNeedByDate;
+
   return {
     id: row['id'],
     rfqNo: row['rfq_no'],
@@ -99,7 +105,7 @@ function mapInquiry(row: Record<string, unknown>, items: Array<Record<string, un
     updatedBy: row['updated_by'],
     sentIncomplete: row['sent_incomplete'] === 1,
     sentIncompleteReason: row['sent_incomplete_reason'] ?? null,
-    needByDate: row['deadline_quotation'] ?? null,
+    needByDate,
     sourcingMissed: row['sourcing_missed'] === 1,
     priceApprovalStartedAt: row['price_approval_started_at'] ?? null,
     items: items.map(mapItem),
@@ -224,14 +230,21 @@ function autoMarkMissedRfqs(): void {
     SET sourcing_missed = 1, status = 'missed', updated_at = datetime('now')
     WHERE sourcing_missed = 0
       AND status = 'rfq'
-      AND deadline_quotation IS NOT NULL
-      AND date(deadline_quotation) < date('now')
-      AND NOT EXISTS (
+      AND EXISTS (
         SELECT 1 FROM inquiry_items ii
-        WHERE ii.inquiry_id = inquiries.id
-          AND COALESCE(ii.supplier,'') != ''
-          AND ii.harga_beli IS NOT NULL
-          AND COALESCE(ii.lead_time,'') != ''
+        WHERE ii.inquiry_id = inquiries.id AND ii.item_need_by_date IS NOT NULL
+          AND date(ii.item_need_by_date) < date('now')
+      )
+      AND (
+        (sourcing_pic IS NULL OR sourcing_pic = '')
+        OR NOT EXISTS (
+          SELECT 1 FROM inquiry_items ii
+          WHERE ii.inquiry_id = inquiries.id
+            AND COALESCE(ii.supplier,'') NOT IN ('', '-')
+            AND ii.harga_beli IS NOT NULL AND ii.harga_beli > 0
+            AND COALESCE(ii.lead_time,'') != ''
+            AND ii.ppn_type IS NOT NULL
+        )
       )
   `).run();
 }
@@ -265,8 +278,8 @@ inquiriesRouter.get('/report', (req: Request, res: Response) => {
   const rows = db.prepare(`
     SELECT
       i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
-      MIN(ii.item_need_by_date) AS need_by_date,
-      CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
+      COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
+      CAST(julianday(COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date))) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
     FROM inquiries i
     LEFT JOIN inquiry_items ii
@@ -298,7 +311,7 @@ inquiriesRouter.get('/report/sourcing', (req: Request, res: Response) => {
   const rows = db.prepare(`
     SELECT
       i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
-      MIN(ii.item_need_by_date) AS need_by_date,
+      COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
       COUNT(ii.id) AS total_items,
       SUM(CASE WHEN COALESCE(ii.supplier,'') != '' AND ii.harga_beli IS NOT NULL AND COALESCE(ii.lead_time,'') != '' THEN 1 ELSE 0 END) AS sourced_items
     FROM inquiries i
@@ -334,7 +347,7 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   }
   if (dateFrom || dateTo) {
     const dateExpr = dateField === 'need_by_date'
-      ? `(SELECT MIN(item_need_by_date) FROM inquiry_items WHERE inquiry_id = i.id)`
+      ? `COALESCE(NULLIF(i.deadline_quotation, ''), (SELECT MIN(item_need_by_date) FROM inquiry_items WHERE inquiry_id = i.id))`
       : `date(i.tanggal)`;
     if (dateFrom) { where += ` AND ${dateExpr} >= ?`; params.push(String(dateFrom)); }
     if (dateTo)   { where += ` AND ${dateExpr} <= ?`; params.push(String(dateTo)); }
@@ -343,8 +356,8 @@ inquiriesRouter.get('/report/export', (req: Request, res: Response) => {
   const summaryRows = db.prepare(`
     SELECT
       i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
-      MIN(ii.item_need_by_date) AS need_by_date,
-      CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
+      COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
+      CAST(julianday(COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date))) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
     FROM inquiries i
     LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id AND ii.item_need_by_date IS NOT NULL
@@ -634,12 +647,18 @@ inquiriesRouter.get('/dashboard', (_req: Request, res: Response) => {
   ).all() as Array<{ sourcing_pic: string; items_count: number }>;
 
   const urgentRfqs = db.prepare(
-    `SELECT id, rfq_no, customer, sourcing_pic, deadline_quotation,
-       CAST(julianday(deadline_quotation) - julianday('now') AS INTEGER) as days_left
-     FROM inquiries
-     WHERE status = 'rfq' AND sourcing_missed = 0 AND deadline_quotation IS NOT NULL
-     ORDER BY deadline_quotation ASC LIMIT 8`
-  ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; deadline_quotation: string; days_left: number }>;
+    `SELECT i.id, i.rfq_no, i.customer, i.sourcing_pic,
+       COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date)) AS need_by_date,
+       CAST(julianday(COALESCE(NULLIF(i.deadline_quotation, ''), MIN(ii.item_need_by_date))) - julianday(date('now', 'localtime')) AS INTEGER) AS days_left
+     FROM inquiries i
+     LEFT JOIN inquiry_items ii ON ii.inquiry_id = i.id
+     WHERE i.status = 'rfq'
+       AND i.sourcing_missed = 0
+     GROUP BY i.id
+     HAVING need_by_date IS NOT NULL AND need_by_date != ''
+       AND days_left >= 0 AND days_left <= 1
+     ORDER BY need_by_date ASC LIMIT 8`
+  ).all() as Array<{ id: string; rfq_no: string; customer: string; sourcing_pic: string | null; need_by_date: string; days_left: number }>;
 
   res.json({
     total, thisMonth, quotationSent, unsent, conversionRate, topSales, topMarketing, statusBreakdown,
@@ -1091,16 +1110,21 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Cannot edit inquiry at this stage.' }); return;
   }
 
-  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, updatedBy, updatedByName } =
-    req.body as Record<string, unknown>;
-  const org = req.body ? normalizeOrganization((req.body as Record<string, unknown>)['organization']) : null;
-  if ((req.body as Record<string, unknown>)['organization'] != null && !org) {
+  const body = req.body as Record<string, unknown>;
+  const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, updatedBy, updatedByName } =
+    body;
+  const org = req.body ? normalizeOrganization(body['organization']) : null;
+  if (body['organization'] != null && !org) {
     res.status(400).json({ error: 'organization must exist in Settings.' }); return;
   }
 
   const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
+  const rawItems = Array.isArray(body['items']) ? body['items'] as Array<Record<string, unknown>> : null;
+  if (rawItems && rawItems.length === 0) {
+    res.status(400).json({ error: 'At least one item is required.' }); return;
+  }
 
-  db.prepare(
+  const updateInquiry = db.prepare(
     `UPDATE inquiries SET
        customer = COALESCE(?, customer), sales_pic = COALESCE(?, sales_pic),
        organization = COALESCE(?, organization),
@@ -1108,24 +1132,69 @@ inquiriesRouter.put('/:id', (req: Request, res: Response) => {
        deadline_quotation = ?, lampiran = ?,
        updated_at = ?, updated_by = ?
      WHERE id = ?`
-  ).run(customer ?? null, salesPic ?? null, org ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
+  );
+  const updateSingleItem = db.prepare(
+    `UPDATE inquiry_items SET
+       item_name = COALESCE(?, item_name),
+       item_extended_description = ?,
+       item_quantity = ?,
+       item_uom = ?,
+       item_need_by_date = ?,
+       item_manufacturer_name = ?,
+       item_manufacturer_part_number = ?,
+       item_classification_of_goods = ?,
+       item_image = ?
+     WHERE inquiry_id = ?`
+  );
+  const updateItem = db.prepare(
+    `UPDATE inquiry_items SET
+       item_name = ?,
+       item_extended_description = ?,
+       item_quantity = ?,
+       item_uom = ?,
+       item_need_by_date = ?,
+       item_image = ?
+     WHERE id = ? AND inquiry_id = ?`
+  );
+  const insertItem = db.prepare(
+    `INSERT INTO inquiry_items (id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
+      item_extended_description, item_image)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  const deleteMissingItems = db.prepare(
+    `DELETE FROM inquiry_items
+     WHERE inquiry_id = ? AND id NOT IN (${rawItems?.map(() => '?').join(',') || "''"})`
+  );
+  const runUpdate = db.transaction(() => {
+    updateInquiry.run(customer ?? null, salesPic ?? null, org ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
 
-  const itemCount = (db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id) as { c: number }).c;
-  if (itemCount === 1) {
-    db.prepare(
-      `UPDATE inquiry_items SET
-         item_name = COALESCE(?, item_name),
-         item_extended_description = ?,
-         item_quantity = ?,
-         item_uom = ?,
-         item_need_by_date = ?,
-         item_manufacturer_name = ?,
-         item_manufacturer_part_number = ?,
-         item_classification_of_goods = ?
-       WHERE inquiry_id = ?`
-    ).run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate,
-      itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, id);
-  }
+    if (rawItems) {
+      const keptIds: string[] = [];
+      for (const item of rawItems) {
+        const itemId = typeof item['id'] === 'string' && item['id'] ? String(item['id']) : generateId();
+        const existing = db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id) as { id: string } | undefined;
+        const itemName = String(item['itemName'] ?? '').trim();
+        const itemQuantity = item['itemQuantity'] ?? null;
+        const itemUomValue = String(item['itemUom'] ?? '').trim();
+        const itemDescription = item['itemExtendedDescription'] == null ? null : String(item['itemExtendedDescription']).trim();
+        const itemImageValue = item['itemImage'] ?? null;
+        keptIds.push(itemId);
+        if (existing) {
+          updateItem.run(itemName, itemDescription, itemQuantity, itemUomValue, needByDate, itemImageValue, itemId, id);
+        } else {
+          insertItem.run(itemId, id, itemName, itemQuantity, itemUomValue, needByDate, itemDescription, itemImageValue);
+        }
+      }
+      deleteMissingItems.run(id, ...keptIds);
+    } else {
+      const itemCount = (db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id) as { c: number }).c;
+      if (itemCount === 1) {
+        updateSingleItem.run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate,
+          itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, itemImage ?? null, id);
+      }
+    }
+  });
+  runUpdate();
 
   logActivity(id, 'Inquiry updated', inquiry.status, inquiry.status, null, String(updatedBy ?? ''), String(updatedByName ?? updatedBy ?? ''));
   res.json({ ok: true });
