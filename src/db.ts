@@ -121,6 +121,7 @@ db.exec(`
     approved_price REAL,
     alternate_name TEXT,
     ppn_type TEXT,
+    supplier_url TEXT,
     FOREIGN KEY(inquiry_id) REFERENCES inquiries(id) ON DELETE CASCADE
   );
 
@@ -227,7 +228,7 @@ db.exec(`
 // Fresh installs jump straight to LATEST_VERSION (all columns already in CREATE TABLE above).
 // Existing DBs run only the migrations they haven't seen yet.
 
-const LATEST_VERSION = 20;
+const LATEST_VERSION = 22;
 
 const cols = (table: string): string[] =>
   (db.prepare(`PRAGMA table_info('${table}')`).all() as Array<{ name: string }>).map((c) => c.name);
@@ -488,6 +489,15 @@ const migrations: Array<{ version: number; run: () => void }> = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications (recipient_username)');
     },
   },
+  {
+    // Add supplier_url to inquiry_items for sourcing reference link
+    version: 22,
+    run: () => {
+      if (!cols('inquiry_items').includes('supplier_url')) {
+        db.exec('ALTER TABLE inquiry_items ADD COLUMN supplier_url TEXT');
+      }
+    },
+  },
 ];
 
 const runMigrations = () => {
@@ -528,6 +538,9 @@ const ensureInquiryItemsColumns = () => {
   }
   if (!c.includes('review_round')) {
     db.exec('ALTER TABLE inquiry_items ADD COLUMN review_round INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!c.includes('supplier_url')) {
+    db.exec('ALTER TABLE inquiry_items ADD COLUMN supplier_url TEXT');
   }
 };
 
