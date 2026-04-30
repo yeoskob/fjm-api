@@ -667,10 +667,15 @@ inquiriesRouter.get('/:id([^/]{1,})', (req: Request, res: Response) => {
 
 // POST /inquiries/import-coupa
 inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
-  const { fileBase64, fileName, createdBy, createdByName, organization } = req.body as Record<string, unknown>;
+  const { fileBase64, fileName, createdBy, createdByName, organization, needByDate } = req.body as Record<string, unknown>;
   const org = normalizeOrganization(organization);
   if (!fileBase64 || !fileName || !createdBy || !org) {
     res.status(400).json({ error: 'fileBase64, fileName, createdBy, organization are required. Organization must exist in Settings.' });
+    return;
+  }
+  const overrideNeedByDate = typeof needByDate === 'string' && needByDate.trim() ? needByDate.trim() : null;
+  if (!overrideNeedByDate) {
+    res.status(400).json({ error: 'needByDate is required.' });
     return;
   }
 
@@ -727,7 +732,7 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
       item_name: readSheetCell(sheet, r, fieldMap['item.name']),
       item_quantity: toNumber(readSheetCell(sheet, r, fieldMap['item.quantity'])),
       item_uom: readSheetCell(sheet, r, fieldMap['item.uom']),
-      item_need_by_date: parseExcelDate(readSheetCell(sheet, r, fieldMap['item.need_by_date'])),
+      item_need_by_date: overrideNeedByDate,
       item_manufacturer_name: readSheetCell(sheet, r, fieldMap['item.manufacturer_name']),
       item_manufacturer_part_number: readSheetCell(sheet, r, fieldMap['item.manufacturer_part_number']),
       item_classification_of_goods: readSheetCell(sheet, r, fieldMap['item.classification_of_goods']),
@@ -761,9 +766,9 @@ inquiriesRouter.post('/import-coupa', (req: Request, res: Response) => {
 
   const tx = db.transaction(() => {
     db.prepare(
-      `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, status, coupa_source, organization, coupa_file_name, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'new_inquiry', 1, ?, ?, ?, ?)`
-    ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, org, String(fileName), createdAt, createdBy);
+      `INSERT INTO inquiries (id, rfq_no, tanggal, customer, sales_pic, nama_barang, deadline_quotation, status, coupa_source, organization, coupa_file_name, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'new_inquiry', 1, ?, ?, ?, ?)`
+    ).run(id, rfqNo, tanggal, customer, salesPic, namaBarang, overrideNeedByDate, org, String(fileName), createdAt, createdBy);
 
     const insertItem = db.prepare(
       `INSERT INTO inquiry_items (
