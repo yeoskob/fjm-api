@@ -1774,7 +1774,8 @@ inquiriesRouter.get('/:id/notes', (req: Request, res: Response) => {
 // POST /inquiries/:id/notes
 inquiriesRouter.post('/:id/notes', (req: Request, res: Response) => {
   const { id } = req.params;
-  const { note, doneBy, doneByName, role } = req.body as Record<string, unknown>;
+  const { note, doneBy, doneByName } = req.body as Record<string, unknown>;
+  const authUser = (req as any).user as { role: string };
 
   if (!note || !String(note).trim()) {
     res.status(400).json({ error: 'Note cannot be empty.' }); return;
@@ -1784,7 +1785,7 @@ inquiriesRouter.post('/:id/notes', (req: Request, res: Response) => {
     .get(id) as { id: string; sales_pic: string; sourcing_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
 
-  const isAdminOrManager = role === 'admin' || role === 'manager';
+  const isAdminOrManager = authUser.role === 'admin' || authUser.role === 'manager';
   const isAssigned = doneByName === inquiry.sales_pic || doneByName === inquiry.sourcing_pic;
 
   if (!isAdminOrManager && !isAssigned) {
@@ -1819,7 +1820,8 @@ inquiriesRouter.get('/:id/items/:itemId/notes', (req: Request, res: Response) =>
 // POST /inquiries/:id/items/:itemId/notes
 inquiriesRouter.post('/:id/items/:itemId/notes', (req: Request, res: Response) => {
   const { id, itemId } = req.params;
-  const { note, doneBy, doneByName, role } = req.body as Record<string, unknown>;
+  const { note, doneBy, doneByName } = req.body as Record<string, unknown>;
+  const authUser = (req as any).user as { role: string };
 
   if (!note || !String(note).trim()) {
     res.status(400).json({ error: 'Note cannot be empty.' }); return;
@@ -1829,7 +1831,7 @@ inquiriesRouter.post('/:id/items/:itemId/notes', (req: Request, res: Response) =
     .get(id) as { id: string; sales_pic: string; sourcing_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
 
-  const isAdminOrManager = role === 'admin' || role === 'manager';
+  const isAdminOrManager = authUser.role === 'admin' || authUser.role === 'manager';
   const isAssigned = doneByName === inquiry.sales_pic || doneByName === inquiry.sourcing_pic;
 
   if (!isAdminOrManager && !isAssigned) {
@@ -1847,9 +1849,10 @@ inquiriesRouter.post('/:id/items/:itemId/notes', (req: Request, res: Response) =
 // PATCH /inquiries/:id/assign-sales — admin/manager only
 inquiriesRouter.patch('/:id/assign-sales', (req: Request, res: Response) => {
   const { id } = req.params;
-  const { salesPic, doneBy, doneByName, role } = req.body as Record<string, unknown>;
+  const { salesPic, doneBy, doneByName } = req.body as Record<string, unknown>;
+  const authUser = (req as any).user as { role: string };
 
-  if (role !== 'admin' && role !== 'manager') {
+  if (authUser.role !== 'admin' && authUser.role !== 'manager') {
     res.status(403).json({ error: 'Only admin or manager can reassign Sales PIC.' }); return;
   }
   if (!salesPic || !String(salesPic).trim()) {
@@ -1885,21 +1888,22 @@ inquiriesRouter.patch('/:id/assign-sales', (req: Request, res: Response) => {
 // Admin/manager can assign any sourcing user; sourcing can self-assign if unassigned
 inquiriesRouter.patch('/:id/assign-sourcing', (req: Request, res: Response) => {
   const { id } = req.params;
-  const { sourcingPic, doneBy, doneByName, role } = req.body as Record<string, unknown>;
+  const { sourcingPic, doneBy, doneByName } = req.body as Record<string, unknown>;
+  const authUser = (req as any).user as { role: string; menus: string[] };
 
   const inquiry = db.prepare('SELECT id, rfq_no, sourcing_pic FROM inquiries WHERE id = ?')
     .get(id) as { id: string; rfq_no: string | null; sourcing_pic: string | null } | undefined;
   if (!inquiry) { res.status(404).json({ error: 'Not found.' }); return; }
 
-  const isSourcing = role === 'sourcing';
-  const isAdminOrManager = role === 'admin' || role === 'manager';
+  const isAdminOrManager = authUser.role === 'admin' || authUser.role === 'manager';
+  const hasSourcingMenu = authUser.menus?.includes('sourcing');
 
-  if (!isAdminOrManager && !isSourcing) {
+  if (!isAdminOrManager && !hasSourcingMenu) {
     res.status(403).json({ error: 'Not authorized.' }); return;
   }
 
-  // Sourcing can only self-assign and only if not already assigned
-  if (isSourcing && !isAdminOrManager) {
+  // Non-admin/manager sourcing users can only self-assign if unassigned
+  if (hasSourcingMenu && !isAdminOrManager) {
     if (inquiry.sourcing_pic) {
       res.status(400).json({ error: 'Already assigned to another sourcing user.' }); return;
     }

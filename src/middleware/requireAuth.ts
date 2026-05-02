@@ -14,14 +14,20 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
 
   const user = db
-    .prepare('SELECT users.id, users.name, users.username, users.role FROM users JOIN sessions ON users.id = sessions.user_id WHERE sessions.token = ?')
-    .get(token) as { id: string; name: string; username: string; role: string } | undefined;
+    .prepare(`SELECT u.id, u.name, u.username, u.role, r.menus
+              FROM users u
+              JOIN sessions s ON u.id = s.user_id
+              LEFT JOIN roles r ON r.name = u.role
+              WHERE s.token = ?`)
+    .get(token) as { id: string; name: string; username: string; role: string; menus: string | null } | undefined;
 
   if (!user) {
     res.status(401).json({ error: 'Session expired. Please log in again.' });
     return;
   }
 
-  (req as any).user = user;
+  let menus: string[] = [];
+  try { menus = user.menus ? JSON.parse(user.menus) : []; } catch { menus = []; }
+  (req as any).user = { ...user, menus };
   next();
 }
