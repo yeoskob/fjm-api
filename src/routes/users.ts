@@ -22,7 +22,15 @@ const roleExists = (role: string): boolean => {
 };
 
 usersRouter.get('/', (_req: Request, res: Response) => {
-  const users = db.prepare('SELECT id, name, username, role FROM users ORDER BY name').all();
+  const rows = db.prepare(
+    `SELECT u.id, u.name, u.username, u.role, r.menus
+     FROM users u LEFT JOIN roles r ON r.name = u.role ORDER BY u.name`
+  ).all() as Array<{ id: string; name: string; username: string; role: string; menus: string | null }>;
+  const users = rows.map((u) => {
+    let menus: string[] = [];
+    try { menus = u.menus ? JSON.parse(u.menus) : []; } catch { menus = []; }
+    return { id: u.id, name: u.name, username: u.username, role: u.role, menus };
+  });
   res.json(users);
 });
 
