@@ -276,7 +276,7 @@ exports.inquiriesRouter.get('/report', (req, res) => {
     }
     const rows = db_1.db.prepare(`
     SELECT
-      i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
+      i.id, i.rfq_no, i.customer, i.sales_pic, i.tanggal, i.status,
       MIN(ii.item_need_by_date) AS need_by_date,
       CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
@@ -326,8 +326,7 @@ exports.inquiriesRouter.get('/report/sourcing', (req, res) => {
 exports.inquiriesRouter.get('/report/export', (req, res) => {
     autoMarkMissedRfqs();
     autoMarkUnsentRfqs();
-    const { month, salesPic, status, search, audience, dateField, dateFrom, dateTo } = req.query;
-    const isPurchasingExport = audience === 'purchasing';
+    const { month, salesPic, status, search, dateField, dateFrom, dateTo } = req.query;
     const params = [];
     let where = `WHERE 1=1`;
     if (salesPic) {
@@ -362,7 +361,7 @@ exports.inquiriesRouter.get('/report/export', (req, res) => {
     }
     const summaryRows = db_1.db.prepare(`
     SELECT
-      i.id, i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal, i.status,
+      i.id, i.rfq_no, i.customer, i.sales_pic, i.tanggal, i.status,
       MIN(ii.item_need_by_date) AS need_by_date,
       CAST(julianday(MIN(ii.item_need_by_date)) - julianday(date(i.tanggal)) AS INTEGER) AS timeline_days,
       CAST(julianday(date(al_sent.sent_at, '+7 hours')) - julianday(date(i.tanggal)) AS INTEGER) AS days_taken
@@ -378,7 +377,7 @@ exports.inquiriesRouter.get('/report/export', (req, res) => {
     const ids = summaryRows.map((r) => r['id']);
     const itemRows = ids.length > 0
         ? db_1.db.prepare(`
-        SELECT i.rfq_no, i.customer, i.sales_pic, i.sourcing_pic, i.tanggal,
+        SELECT i.rfq_no, i.customer, i.sales_pic, i.tanggal,
           ii.item_name, ii.item_quantity, ii.item_uom, ii.item_need_by_date,
           ii.supplier, ii.harga_beli, ii.harga_jual, ii.margin,
           ii.lead_time, ii.moq, ii.stock_availability, ii.ppn_type
@@ -413,9 +412,9 @@ exports.inquiriesRouter.get('/report/export', (req, res) => {
     // Sheet 1: Summary
     const summaryData = [
         ...metadata,
-        ['RFQ No', 'Customer', 'Sales PIC', 'Sourcing PIC', 'Inquiry Date', 'Need By Date', 'Timeline (days)', 'Days Taken', 'Status'],
+        ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Need By Date', 'Timeline (days)', 'Days Taken', 'Status'],
         ...summaryRows.map((r) => [
-            r['rfq_no'], r['customer'], r['sales_pic'], r['sourcing_pic'] ?? '',
+            r['rfq_no'], r['customer'], r['sales_pic'],
             r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
             r['need_by_date'] ? String(r['need_by_date']).slice(0, 10) : '',
             r['timeline_days'] ?? '',
@@ -424,31 +423,18 @@ exports.inquiriesRouter.get('/report/export', (req, res) => {
         ]),
     ];
     // Sheet 2: Items
-    const itemHeaders = isPurchasingExport
-        ? ['RFQ No', 'Customer', 'Sales PIC', 'Sourcing PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Lead Time', 'MOQ', 'Stock', 'PPN Type']
-        : ['RFQ No', 'Customer', 'Sales PIC', 'Sourcing PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'];
     const itemsData = [
         ...metadata,
-        itemHeaders,
-        ...itemRows.map((r) => (isPurchasingExport
-            ? [
-                r['rfq_no'], r['customer'], r['sales_pic'], r['sourcing_pic'] ?? '',
-                r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
-                r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
-                r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
-                r['supplier'] ?? '', r['harga_beli'] ?? '',
-                r['lead_time'] ?? '', r['moq'] ?? '',
-                r['stock_availability'] ?? '', r['ppn_type'] ?? '',
-            ]
-            : [
-                r['rfq_no'], r['customer'], r['sales_pic'], r['sourcing_pic'] ?? '',
-                r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
-                r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
-                r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
-                r['supplier'] ?? '', r['harga_beli'] ?? '', r['harga_jual'] ?? '',
-                r['margin'] ?? '', r['lead_time'] ?? '', r['moq'] ?? '',
-                r['stock_availability'] ?? '', r['ppn_type'] ?? '',
-            ])),
+        ['RFQ No', 'Customer', 'Sales PIC', 'Inquiry Date', 'Item Name', 'Qty', 'UOM', 'Need By Date', 'Supplier', 'Harga Beli', 'Harga Jual', 'Margin (%)', 'Lead Time', 'MOQ', 'Stock', 'PPN Type'],
+        ...itemRows.map((r) => [
+            r['rfq_no'], r['customer'], r['sales_pic'],
+            r['tanggal'] ? String(r['tanggal']).slice(0, 10) : '',
+            r['item_name'] ?? '', r['item_quantity'] ?? '', r['item_uom'] ?? '',
+            r['item_need_by_date'] ? String(r['item_need_by_date']).slice(0, 10) : '',
+            r['supplier'] ?? '', r['harga_beli'] ?? '', r['harga_jual'] ?? '',
+            r['margin'] ?? '', r['lead_time'] ?? '', r['moq'] ?? '',
+            r['stock_availability'] ?? '', r['ppn_type'] ?? '',
+        ]),
     ];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), 'Summary');
@@ -956,80 +942,33 @@ exports.inquiriesRouter.put('/:id', (req, res) => {
         res.status(400).json({ error: 'Cannot edit inquiry at this stage.' });
         return;
     }
-    const body = req.body;
-    const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, itemImage, deadlineQuotation, lampiran, updatedBy, updatedByName } = body;
-    const org = req.body ? normalizeOrganization(body['organization']) : null;
-    if (body['organization'] != null && !org) {
+    const { customer, salesPic, namaBarang, spesifikasi, qty, itemUom, itemNeedByDate, itemManufacturerName, itemManufacturerPartNumber, itemClassificationOfGoods, deadlineQuotation, lampiran, updatedBy, updatedByName } = req.body;
+    const org = req.body ? normalizeOrganization(req.body['organization']) : null;
+    if (req.body['organization'] != null && !org) {
         res.status(400).json({ error: 'organization must exist in Settings.' });
         return;
     }
     const needByDate = itemNeedByDate ?? deadlineQuotation ?? null;
-    const rawItems = Array.isArray(body['items']) ? body['items'] : null;
-    if (rawItems && rawItems.length === 0) {
-        res.status(400).json({ error: 'At least one item is required.' });
-        return;
-    }
-    const updateInquiry = db_1.db.prepare(`UPDATE inquiries SET
+    db_1.db.prepare(`UPDATE inquiries SET
        customer = COALESCE(?, customer), sales_pic = COALESCE(?, sales_pic),
        organization = COALESCE(?, organization),
        nama_barang = COALESCE(?, nama_barang), spesifikasi = ?, qty = ?,
        deadline_quotation = ?, lampiran = ?,
        updated_at = ?, updated_by = ?
-     WHERE id = ?`);
-    const updateSingleItem = db_1.db.prepare(`UPDATE inquiry_items SET
-       item_name = COALESCE(?, item_name),
-       item_extended_description = ?,
-       item_quantity = ?,
-       item_uom = ?,
-       item_need_by_date = ?,
-       item_manufacturer_name = ?,
-       item_manufacturer_part_number = ?,
-       item_classification_of_goods = ?,
-       item_image = ?
-     WHERE inquiry_id = ?`);
-    const updateItem = db_1.db.prepare(`UPDATE inquiry_items SET
-       item_name = ?,
-       item_extended_description = ?,
-       item_quantity = ?,
-       item_uom = ?,
-       item_need_by_date = ?,
-       item_image = ?
-     WHERE id = ? AND inquiry_id = ?`);
-    const insertItem = db_1.db.prepare(`INSERT INTO inquiry_items (id, inquiry_id, item_name, item_quantity, item_uom, item_need_by_date,
-      item_extended_description, item_image)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-    const deleteMissingItems = db_1.db.prepare(`DELETE FROM inquiry_items
-     WHERE inquiry_id = ? AND id NOT IN (${rawItems?.map(() => '?').join(',') || "''"})`);
-    const runUpdate = db_1.db.transaction(() => {
-        updateInquiry.run(customer ?? null, salesPic ?? null, org ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
-        if (rawItems) {
-            const keptIds = [];
-            for (const item of rawItems) {
-                const itemId = typeof item['id'] === 'string' && item['id'] ? String(item['id']) : (0, id_1.generateId)();
-                const existing = db_1.db.prepare('SELECT id FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
-                const itemName = String(item['itemName'] ?? '').trim();
-                const itemQuantity = item['itemQuantity'] ?? null;
-                const itemUomValue = String(item['itemUom'] ?? '').trim();
-                const itemDescription = item['itemExtendedDescription'] == null ? null : String(item['itemExtendedDescription']).trim();
-                const itemImageValue = item['itemImage'] ?? null;
-                keptIds.push(itemId);
-                if (existing) {
-                    updateItem.run(itemName, itemDescription, itemQuantity, itemUomValue, needByDate, itemImageValue, itemId, id);
-                }
-                else {
-                    insertItem.run(itemId, id, itemName, itemQuantity, itemUomValue, needByDate, itemDescription, itemImageValue);
-                }
-            }
-            deleteMissingItems.run(id, ...keptIds);
-        }
-        else {
-            const itemCount = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id).c;
-            if (itemCount === 1) {
-                updateSingleItem.run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, itemImage ?? null, id);
-            }
-        }
-    });
-    runUpdate();
+     WHERE id = ?`).run(customer ?? null, salesPic ?? null, org ?? null, namaBarang ?? null, spesifikasi ?? null, qty ?? null, needByDate, lampiran ?? null, new Date().toISOString(), updatedBy ?? null, id);
+    const itemCount = db_1.db.prepare('SELECT COUNT(*) as c FROM inquiry_items WHERE inquiry_id = ?').get(id).c;
+    if (itemCount === 1) {
+        db_1.db.prepare(`UPDATE inquiry_items SET
+         item_name = COALESCE(?, item_name),
+         item_extended_description = ?,
+         item_quantity = ?,
+         item_uom = ?,
+         item_need_by_date = ?,
+         item_manufacturer_name = ?,
+         item_manufacturer_part_number = ?,
+         item_classification_of_goods = ?
+       WHERE inquiry_id = ?`).run(namaBarang ?? null, spesifikasi ?? null, qty ?? null, itemUom ?? null, needByDate, itemManufacturerName ?? null, itemManufacturerPartNumber ?? null, itemClassificationOfGoods ?? null, id);
+    }
     logActivity(id, 'Inquiry updated', inquiry.status, inquiry.status, null, String(updatedBy ?? ''), String(updatedByName ?? updatedBy ?? ''));
     res.json({ ok: true });
 });
@@ -1163,10 +1102,6 @@ exports.inquiriesRouter.post('/:id/sourcing-info', (req, res) => {
         res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' });
         return;
     }
-    if (!ppnType) {
-        res.status(400).json({ error: 'ppnType is required.' });
-        return;
-    }
     const item = db_1.db.prepare('SELECT id, price_approved FROM inquiry_items WHERE inquiry_id = ? ORDER BY id LIMIT 1').get(id);
     if (!item) {
         res.status(400).json({ error: 'No items found.' });
@@ -1211,10 +1146,6 @@ exports.inquiriesRouter.post('/:id/items/:itemId/sourcing-info', (req, res) => {
         res.status(400).json({ error: 'supplier, hargaBeli, leadTime are required.' });
         return;
     }
-    if (!ppnType) {
-        res.status(400).json({ error: 'ppnType is required.' });
-        return;
-    }
     db_1.db.prepare(`UPDATE inquiry_items SET supplier = ?, harga_beli = ?, lead_time = ?, moq = ?,
        stock_availability = ?, term_pembayaran = ?, alternate_name = ?, ppn_type = ? WHERE id = ?`).run(supplier, hargaBeli, leadTime, moq ?? null, stockAvailability ?? null, termPembayaran ?? null, alternateName ?? null, ppnType ?? null, itemId);
     logActivity(id, 'Sourcing info submitted', 'rfq', 'rfq', null, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
@@ -1231,19 +1162,6 @@ exports.inquiriesRouter.post('/:id/send-to-price-approval', (req, res) => {
     }
     if (inquiry.status !== 'rfq') {
         res.status(400).json({ error: 'Inquiry must be in rfq status.' });
-        return;
-    }
-    const submittedCount = db_1.db.prepare(`
-    SELECT COUNT(*) as c
-    FROM inquiry_items
-    WHERE inquiry_id = ?
-      AND COALESCE(supplier, '') != ''
-      AND harga_beli IS NOT NULL
-      AND COALESCE(lead_time, '') != ''
-      AND COALESCE(sourcing_missed, 0) = 0
-  `).get(id).c;
-    if (submittedCount === 0) {
-        res.status(400).json({ error: 'At least one item must be sourced before sending to Price Approval.' });
         return;
     }
     const { doneBy, doneByName, note } = req.body;
@@ -1267,8 +1185,8 @@ exports.inquiriesRouter.post('/:id/return-to-sourcing', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
-        res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' });
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
         return;
     }
     const { doneBy, doneByName } = req.body;
@@ -1278,7 +1196,7 @@ exports.inquiriesRouter.post('/:id/return-to-sourcing', (req, res) => {
     }
     db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
         .run('rfq', new Date().toISOString(), String(doneBy), id);
-    logActivity(id, 'Returned to Sourcing', inquiry.status, 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
+    logActivity(id, 'Returned to Sourcing', 'price_approval', 'rfq', null, String(doneBy), String(doneByName ?? doneBy));
     const sourcingRecipient = (0, notifications_1.usernameForPic)(inquiry.sourcing_pic);
     if (sourcingRecipient) {
         (0, notifications_1.insertAndBroadcast)('return_to_sourcing', id, inquiry.rfq_no ?? null, `${inquiry.rfq_no ?? 'RFQ'} returned to Sourcing by ${String(doneByName ?? doneBy)}`, String(doneBy), String(doneByName ?? doneBy), sourcingRecipient);
@@ -1388,8 +1306,8 @@ exports.inquiriesRouter.post('/:id/send-to-price-approved', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
-        res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' });
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
         return;
     }
     const { doneBy, doneByName } = req.body;
@@ -1399,7 +1317,7 @@ exports.inquiriesRouter.post('/:id/send-to-price-approved', (req, res) => {
     }
     db_1.db.prepare('UPDATE inquiries SET status = ?, updated_at = ?, updated_by = ?, price_approval_started_at = NULL WHERE id = ?')
         .run('price_approved', new Date().toISOString(), String(doneBy), id);
-    logActivity(id, 'Sent to Price Approved', inquiry.status, 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
+    logActivity(id, 'Sent to Price Approved', 'price_approval', 'price_approved', null, String(doneBy), String(doneByName ?? doneBy));
     const salesRecipient = (0, notifications_1.usernameForPic)(inquiry.sales_pic);
     if (salesRecipient) {
         (0, notifications_1.insertAndBroadcast)('price_approved', id, inquiry.rfq_no ?? null, `${inquiry.rfq_no ?? 'RFQ'} is Price Approved — ready to send quotation`, String(doneBy), String(doneByName ?? doneBy), salesRecipient);
@@ -1414,8 +1332,8 @@ exports.inquiriesRouter.post('/:id/approve', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
-        res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' });
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
         return;
     }
     const { hargaJual, leadTimeCustomer, validitasQuotation, catatanQuotation, doneBy, doneByName } = req.body;
@@ -1431,7 +1349,7 @@ exports.inquiriesRouter.post('/:id/approve', (req, res) => {
     const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
     db_1.db.prepare(`UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, item.id);
-    logActivity(id, 'Price approved', inquiry.status, inquiry.status, String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+    logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
 });
@@ -1442,8 +1360,8 @@ exports.inquiriesRouter.post('/:id/items/:itemId/approve', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
-        res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' });
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
         return;
     }
     const item = db_1.db.prepare('SELECT id, harga_beli FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
@@ -1459,7 +1377,7 @@ exports.inquiriesRouter.post('/:id/items/:itemId/approve', (req, res) => {
     const margin = item.harga_beli != null ? Number(hargaJual) - item.harga_beli : null;
     db_1.db.prepare(`UPDATE inquiry_items SET harga_jual = ?, approved_price = ?, margin = ?, lead_time_customer = ?,
        validitas_quotation = ?, catatan_quotation = ?, price_approved = 1, needs_price_review = 0, review_status = 'approved' WHERE id = ?`).run(hargaJual, hargaJual, margin, leadTimeCustomer ?? null, validitasQuotation ?? null, catatanQuotation ?? null, itemId);
-    logActivity(id, 'Price approved', inquiry.status, inquiry.status, String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
+    logActivity(id, 'Price approved', 'price_approval', 'price_approval', String(catatanQuotation ?? ''), String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     recalcInquiryStatus(id, String(doneBy ?? ''), String(doneByName ?? doneBy ?? ''));
     res.json({ ok: true });
 });
@@ -1471,8 +1389,8 @@ exports.inquiriesRouter.post('/:id/items/:itemId/reject', (req, res) => {
         res.status(404).json({ error: 'Not found.' });
         return;
     }
-    if (inquiry.status !== 'price_approval' && inquiry.status !== 'follow_up') {
-        res.status(400).json({ error: 'Inquiry must be in price_approval or follow_up status.' });
+    if (inquiry.status !== 'price_approval') {
+        res.status(400).json({ error: 'Inquiry must be in price_approval status.' });
         return;
     }
     const item = db_1.db.prepare('SELECT id, review_round, item_name, review_status, needs_price_review FROM inquiry_items WHERE id = ? AND inquiry_id = ?').get(itemId, id);
@@ -1503,7 +1421,7 @@ exports.inquiriesRouter.post('/:id/items/:itemId/reject', (req, res) => {
          approved_price = ?,
          review_round = ?
      WHERE id = ?`).run(nextCounterPrice, nextRound, itemId);
-    logActivity(id, `Counter price updated (${item.item_name ?? 'Item'})`, inquiry.status, inquiry.status, `Counter price: Rp ${nextCounterPrice.toLocaleString('id-ID')}${negotiationReason ? `. ${negotiationReason}` : ''}`, String(doneBy), String(doneByName ?? doneBy));
+    logActivity(id, `Counter price updated (${item.item_name ?? 'Item'})`, 'price_approval', 'price_approval', `Counter price: Rp ${nextCounterPrice.toLocaleString('id-ID')}${negotiationReason ? `. ${negotiationReason}` : ''}`, String(doneBy), String(doneByName ?? doneBy));
     db_1.db.prepare(`INSERT INTO inquiry_notes (id, inquiry_id, item_id, note, created_by, created_by_name, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`).run((0, id_1.generateId)(), id, itemId, `Counter price set to Rp ${nextCounterPrice.toLocaleString('id-ID')}${negotiationReason ? `. Note: ${negotiationReason}` : ''}`, String(doneBy), String(doneByName ?? doneBy), new Date().toISOString());
     res.json({ ok: true });

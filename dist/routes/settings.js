@@ -1,13 +1,7 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.settingsRouter = void 0;
 const express_1 = require("express");
-const fs_1 = __importDefault(require("fs"));
-const os_1 = __importDefault(require("os"));
-const path_1 = __importDefault(require("path"));
 const db_1 = require("../db");
 const id_1 = require("../utils/id");
 exports.settingsRouter = (0, express_1.Router)();
@@ -30,30 +24,6 @@ exports.settingsRouter.put('/:key', (req, res) => {
     db_1.db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
         .run(key, String(value));
     res.json({ key, value: String(value) });
-});
-// GET /settings/backup (admin only)
-exports.settingsRouter.get('/backup', async (req, res) => {
-    const authUser = req.user;
-    if (!authUser || authUser.role !== 'admin') {
-        res.status(403).json({ error: 'Only admin can backup the database.' });
-        return;
-    }
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `fjm-db-backup-${timestamp}.db`;
-    const backupPath = path_1.default.join(os_1.default.tmpdir(), filename);
-    try {
-        await db_1.db.backup(backupPath);
-        res.download(backupPath, filename, (err) => {
-            fs_1.default.promises.rm(backupPath, { force: true }).catch(() => undefined);
-            if (err && !res.headersSent) {
-                res.status(500).json({ error: 'Failed to download database backup.' });
-            }
-        });
-    }
-    catch (err) {
-        fs_1.default.promises.rm(backupPath, { force: true }).catch(() => undefined);
-        res.status(500).json({ error: 'Failed to create database backup.' });
-    }
 });
 // GET /settings/organizations
 exports.settingsRouter.get('/organizations', (_req, res) => {
